@@ -851,6 +851,20 @@ local0.*    /var/log/pgpool.log
       You need to reload pgpool.conf if you change health_check_retry_delay.
       </p>
     </dd>
+
+<dt><a name="SEARCH_PRIMARY_NODE_TIMEOUT"></a>search_primary_node_timeout <span class="version">V3.3 -</span></dt>
+    <dd>
+    <p>The parameter specifies the maximum amount of time in seconds to search
+	for a primary node when a failover scenario occurs.
+	pgpool-II will search for the primary node for the amount of time given in case of
+	failover before giving up trying to search for a primary node.
+	0 means keep trying forever
+    </p>
+    <p>
+    You need to reload pgpool.conf if you change search_primary_node_timeout.
+    </p>
+    </dd>
+
 </dl>
 
 <h3>Failover and failback</h3>
