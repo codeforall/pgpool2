@@ -22,7 +22,7 @@
  */
 #include "pool.h"
 #include "pool_proto_modules.h"
-#include "pool_stream.h"
+#include "utils/pool_stream.h"
 #include "pool_config.h"
 #include "utils/pool_memqcache.h"
 #include "version.h"

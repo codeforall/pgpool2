@@ -20,7 +20,7 @@
  */
 #include "pool.h"
 #include "pool_config.h"
-#include "pool_process_context.h"
+#include "context/pool_process_context.h"
 
 #include <ctype.h>
 #include <sys/types.h>
@@ -59,7 +59,7 @@
 #include "version.h"
 #include "parser/pool_memory.h"
 #include "parser/pool_string.h"
-#include "pool_passwd.h"
+#include "auth/pool_passwd.h"
 #include "utils/pool_memqcache.h"
 #include "watchdog/wd_ext.h"
 

@@ -23,9 +23,9 @@
 */
 
 #include "pool.h"
-#include "pool_stream.h"
+#include "utils/pool_stream.h"
 #include "pool_config.h"
-#include "pool_passwd.h"
+#include "auth/pool_passwd.h"
 
 #ifdef HAVE_SYS_TYPES_H
 #include <sys/types.h>

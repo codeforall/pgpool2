@@ -26,7 +26,7 @@
 
 #include "pool.h"
 #include "pool_config.h"
-#include "pool_session_context.h"
+#include "context/pool_session_context.h"
 
 static POOL_SESSION_CONTEXT session_context_d;
 static POOL_SESSION_CONTEXT *session_context = NULL;

@@ -39,7 +39,7 @@
 #endif
 
 #include "pool.h"
-#include "pool_stream.h"
+#include "utils/pool_stream.h"
 #include "pool_config.h"
 
 static int mystrlen(char *str, int upper, int *flag);

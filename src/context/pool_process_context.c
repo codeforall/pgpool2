@@ -22,7 +22,7 @@
  */
 
 #include "pool.h"
-#include "pool_process_context.h"
+#include "context/pool_process_context.h"
 #include "pool_config.h"		/* remove me afterwards */
 
 static POOL_PROCESS_CONTEXT process_context_d;

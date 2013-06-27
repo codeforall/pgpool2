@@ -26,7 +26,7 @@
 #include "pool_config.h"
 #include "pool_rewrite_query.h"
 #include "pool_proto_modules.h"
-#include "pool_session_context.h"
+#include "context/pool_session_context.h"
 
 #include <string.h>
 #include <errno.h>

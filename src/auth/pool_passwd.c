@@ -26,8 +26,8 @@
 #include <errno.h>
 
 #include "pool.h"
-#include "pool_passwd.h"
-#include "utils/md5.h"
+#include "auth/pool_passwd.h"
+#include "auth/md5.h"
 
 static FILE *passwd_fd = NULL;	/* File descriptor for pool_passwd */
 static char saved_passwd_filename[POOLMAXPATHLEN+1];

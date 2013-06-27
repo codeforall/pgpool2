@@ -36,8 +36,8 @@
 #endif
 
 #include "pool.h"
-#include "utils/md5.h"
-#include "pool_stream.h"
+#include "auth/md5.h"
+#include "utils/pool_stream.h"
 #include "pool_config.h"
 #include "pool_proto_modules.h"
 #include "parser/parsenodes.h"

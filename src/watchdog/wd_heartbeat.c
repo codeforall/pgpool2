@@ -46,7 +46,7 @@
 
 #include "pool.h"
 #include "pool_config.h"
-#include "utils/md5.h"
+#include "auth/md5.h"
 #include "watchdog/watchdog.h"
 #include "watchdog/wd_ext.h"
 

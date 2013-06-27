@@ -30,7 +30,7 @@
 #include "pool.h"
 #include "pool_config.h"
 #include "pool_proto_modules.h"
-#include "pool_stream.h"
+#include "utils/pool_stream.h"
 
 POOL_STATUS AsciiRow(POOL_CONNECTION *frontend,
 					 POOL_CONNECTION_POOL *backend,

@@ -23,9 +23,9 @@
 #include "pool.h"
 #include "pool_config.h"
 #include "pool_proto_modules.h"
-#include "pool_session_context.h"
-#include "pool_query_context.h"
-#include "pool_select_walker.h"
+#include "utils/pool_select_walker.h"
+#include "context/pool_session_context.h"
+#include "context/pool_query_context.h"
 #include "parser/nodes.h"
 
 #include <string.h>

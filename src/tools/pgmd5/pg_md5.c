@@ -23,8 +23,8 @@
  */
 #include "pool.h"
 #include "pool_config.h"
-#include "pool_passwd.h"
-#include "utils/md5.h"
+#include "auth/pool_passwd.h"
+#include "auth/md5.h"
 
 #include <stdio.h>
 #include <stdlib.h>

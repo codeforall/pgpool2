@@ -38,8 +38,8 @@
 #include "pool.h"
 #include "pcp/pcp.h"
 #include "pcp/pcp_stream.h"
-#include "pool_process_reporting.h"
-#include "utils/md5.h"
+#include "utils/pool_process_reporting.h"
+#include "auth/md5.h"
 
 
 struct timeval pcp_timeout;

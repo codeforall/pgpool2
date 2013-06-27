@@ -50,12 +50,12 @@
 #endif
 
 #include "pool.h"
-#include "pool_process_context.h"
-#include "pool_session_context.h"
+#include "context/pool_process_context.h"
+#include "context/pool_session_context.h"
 #include "pool_config.h"
 #include "utils/pool_ip.h"
-#include "utils/md5.h"
-#include "pool_stream.h"
+#include "auth/md5.h"
+#include "utils/pool_stream.h"
 
 extern int myargc;
 extern char **myargv;

@@ -25,8 +25,8 @@
 
 #include "pool.h"
 #include "pool_timestamp.h"
-#include "pool_relcache.h"
-#include "pool_select_walker.h"
+#include "utils/pool_relcache.h"
+#include "utils/pool_select_walker.h"
 #include "pool_config.h"
 #include "parser/parsenodes.h"
 #include "parser/parser.h"

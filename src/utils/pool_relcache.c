@@ -26,8 +26,8 @@
 #include <string.h>
 
 #include "pool.h"
-#include "pool_relcache.h"
-#include "pool_session_context.h"
+#include "utils/pool_relcache.h"
+#include "context/pool_session_context.h"
 #include "pool_config.h"
 
 /*

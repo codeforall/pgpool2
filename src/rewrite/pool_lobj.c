@@ -30,7 +30,7 @@
 
 #include "pool.h"
 #include "pool_lobj.h"
-#include "pool_relcache.h"
+#include "utils/pool_relcache.h"
 #include "pool_config.h"
 
 /*

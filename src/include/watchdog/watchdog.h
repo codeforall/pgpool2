@@ -29,7 +29,7 @@
 #include <sys/time.h>
 #include "libpq-fe.h"
 
-#include "utils/md5.h"
+#include "auth/md5.h"
 
 #define WD_MAX_HOST_NAMELEN (128)
 #define WD_MAX_PATH_LEN (128)

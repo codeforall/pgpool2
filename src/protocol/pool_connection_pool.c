@@ -43,9 +43,9 @@
 #include <stdlib.h>
 
 #include "pool.h"
-#include "pool_stream.h"
+#include "utils/pool_stream.h"
 #include "pool_config.h"
-#include "pool_process_context.h"
+#include "context/pool_process_context.h"
 
 static int pool_index;	/* Active pool index */
 POOL_CONNECTION_POOL *pool_connection_pool;	/* connection pool */

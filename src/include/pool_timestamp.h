@@ -29,7 +29,7 @@
 #include "pool.h"
 #include "pool_proto_modules.h"
 #include "parser/nodes.h"
-#include "pool_session_context.h"
+#include "context/pool_session_context.h"
 
 extern char *rewrite_timestamp(POOL_CONNECTION_POOL *backend, Node *node, bool rewrite_to_params, POOL_SENT_MESSAGE *message);
 extern char *bind_rewrite_timestamp(POOL_CONNECTION_POOL *backend, POOL_SENT_MESSAGE *message, const char *orig_msg, int *len);

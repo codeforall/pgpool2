@@ -52,10 +52,10 @@
 #include "pool.h"
 #include "pcp/pcp_stream.h"
 #include "pcp/pcp.h"
-#include "utils/md5.h"
+#include "auth/md5.h"
 #include "pool_config.h"
-#include "pool_process_context.h"
-#include "pool_process_reporting.h"
+#include "context/pool_process_context.h"
+#include "utils/pool_process_reporting.h"
 
 #define MAX_FILE_LINE_LEN    512
 #define MAX_USER_PASSWD_LEN  128

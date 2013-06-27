@@ -3,43 +3,46 @@ libs_dir = $(top_srcdir)/src/libs
 AM_CPPFLAGS = -D_GNU_SOURCE -I $(top_srcdir)/src/include -I @PGSQL_INCLUDE_DIR@
 bin_PROGRAMS = pgpool
 
-pgpool_SOURCES = main/main.c user_end/child.c server_end/pool_auth.c \
-	main/pool_config.l utils/pool_error.c \
-	main/pool_process_query.c \
-	main/pool_stream.c \
-	server_end/pool_connection_pool.c \
-	main/pool_params.c \
-	utils/pool_signal.c \
-	user_end/pcp_child.c \
-	utils/md5.c \
-	utils/pool_shmem.c \
-	utils/pool_sema.c \
+pgpool_SOURCES = main/main.c \
+	main/pool_globals.c \
+	config/pool_config.l \
+	pcp_con/pcp_child.c \
+	pcp_con/recovery.c \
+	auth/md5.c \
+	auth/pool_auth.c \
+	auth/pool_passwd.c \
+	auth/pool_hba.c \
+	protocol/pool_proto2.c \
+	protocol/child.c \
+	protocol/pool_process_query.c \
+	protocol/pool_connection_pool.c \
+	protocol/pool_proto_modules.c \
+    	query_cache/pool_memqcache.c \
+    	query_cache/pool_query_cache.c \
 	system_db/pool_system.c \
-	rewrite/pool_rewrite_query.c \
-	rewrite/pool_rewrite_outfuncs.c \
-	main/pool_query_cache.c \
-	user_end/pool_hba.c \
+	context/pool_session_context.c \
+	context/pool_process_context.c \
+	context/pool_query_context.c \
+	streaming_replication/pool_worker_child.c \
+	rewrite/pool_timestamp.c \
+	rewrite/pool_lobj.c \
+	rewrite/parallel_query/pool_rewrite_query.c \
+	rewrite/parallel_query/pool_rewrite_outfuncs.c \
+	utils/pool_select_walker.c \
+	utils/strlcpy.c \
+	utils/pool_params.c \
+	utils/ps_status.c \
+	utils/pool_shmem.c \
+	utils/pool_error.c \
+	utils/pool_sema.c \
+	utils/pool_signal.c \
 	utils/pool_path.c \
 	utils/pool_ip.c \
-	main/ps_status.c \
-	utils/strlcpy.c \
-	main/recovery.c \
-	main/pool_relcache.c \
-	main/pool_process_reporting.c \
+	utils/pool_relcache.c \
+	utils/pool_process_reporting.c \
 	utils/pool_ssl.c \
-	rewrite/pool_timestamp.c \
-	server_end/pool_proto2.c \
-	server_end/pool_proto_modules.c \
-	rewrite/pool_lobj.c \
-	main/pool_process_context.c \
-    utils/pool_memqcache.c \
-	main/pool_session_context.c \
-	main/pool_query_context.c \
-	server_end/pool_worker_child.c \
-	main/pool_passwd.c \
-	main/pool_globals.c \
-	rewrite/pool_select_walker.c \
-    utils/getopt_long.c
+	utils/pool_stream.c \
+    	utils/getopt_long.c
 
 DEFS = @DEFS@ \
 	-DDEFAULT_CONFIGDIR=\"$(sysconfdir)\"

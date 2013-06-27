@@ -32,8 +32,8 @@
 #include "parser/pg_list.h"
 #include "parser/parsenodes.h"
 #include "pool_rewrite_query.h"
-#include "pool_session_context.h"
-#include "pool_process_reporting.h"
+#include "context/pool_session_context.h"
+#include "utils/pool_process_reporting.h"
 
 #define SPECIFIED_ERROR 1
 #define POOL_DUMMY_WRITE_QUERY "DELETE FROM foo WHERE col = 'pgpool: unable to parse the query'"

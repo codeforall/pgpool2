@@ -25,7 +25,7 @@
 #include <string.h>
 #include <ctype.h>
 #include "pool.h"
-#include "utils/md5.h"
+#include "auth/md5.h"
 
 #ifdef NOT_USED
 typedef unsigned char uint8;	/* == 8 bits */

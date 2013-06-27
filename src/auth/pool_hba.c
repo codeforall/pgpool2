@@ -33,11 +33,11 @@
 #include "pool.h"
 #include "utils/pool_path.h"
 #include "utils/pool_ip.h"
-#include "pool_stream.h"
+#include "utils/pool_stream.h"
 #include "pool_config.h"
 #include "parser/pool_memory.h"
 #include "parser/pg_list.h"
-#include "pool_passwd.h"
+#include "auth/pool_passwd.h"
 
 #define MULTI_VALUE_SEP "\001" /* delimiter for multi-valued column strings */
 #define MAX_TOKEN	256
