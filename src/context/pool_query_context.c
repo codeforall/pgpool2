@@ -22,7 +22,7 @@
  */
 #include "pool.h"
 #include "pool_config.h"
-#include "pool_proto_modules.h"
+#include "protocol/pool_proto_modules.h"
 #include "utils/pool_select_walker.h"
 #include "context/pool_session_context.h"
 #include "context/pool_query_context.h"

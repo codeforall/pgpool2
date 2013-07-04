@@ -42,16 +42,15 @@
 #endif
 
 #include "auth/md5.h"
-#include "utils/pool_memqcache.h"
-#include "utils/pool_stream.h"
 #include "pool_config.h"
-#include "pool_proto_modules.h"
+#include "protocol/pool_proto_modules.h"
 #include "parser/parsenodes.h"
 #include "context/pool_session_context.h"
 #include "utils/pool_relcache.h"
 #include "utils/pool_select_walker.h"
+#include "utils/pool_memqcache.h"
 #include "utils/pool_stream.h"
-#include "pool_proto_modules.h"
+#include "utils/pool_stream.h"
 
 #ifdef USE_MEMCACHED
 memcached_st *memc;

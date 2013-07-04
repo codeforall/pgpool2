@@ -24,8 +24,8 @@
 
 #include "pool.h"
 #include "pool_config.h"
-#include "pool_rewrite_query.h"
-#include "pool_proto_modules.h"
+#include "rewrite/pool_rewrite_query.h"
+#include "protocol/pool_proto_modules.h"
 #include "context/pool_session_context.h"
 
 #include <string.h>

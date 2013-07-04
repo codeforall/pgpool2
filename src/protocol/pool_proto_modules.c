@@ -44,14 +44,14 @@
 #include <ctype.h>
 
 #include "pool.h"
-#include "pool_timestamp.h"
-#include "pool_proto_modules.h"
-#include "pool_rewrite_query.h"
+#include "rewrite/pool_timestamp.h"
+#include "rewrite/pool_rewrite_query.h"
+#include "rewrite/pool_lobj.h"
+#include "protocol/pool_proto_modules.h"
 #include "pool_config.h"
 #include "parser/pool_string.h"
 #include "context/pool_session_context.h"
 #include "context/pool_query_context.h"
-#include "pool_lobj.h"
 #include "utils/pool_select_walker.h"
 #include "utils/pool_relcache.h"
 #include "utils/pool_stream.h"

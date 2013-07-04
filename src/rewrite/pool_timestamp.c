@@ -24,7 +24,7 @@
 #include <string.h>
 
 #include "pool.h"
-#include "pool_timestamp.h"
+#include "rewrite/pool_timestamp.h"
 #include "utils/pool_relcache.h"
 #include "utils/pool_select_walker.h"
 #include "pool_config.h"

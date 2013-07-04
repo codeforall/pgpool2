@@ -39,7 +39,7 @@
 #include "auth/md5.h"
 #include "utils/pool_stream.h"
 #include "pool_config.h"
-#include "pool_proto_modules.h"
+#include "protocol/pool_proto_modules.h"
 #include "parser/parsenodes.h"
 
 #define QUERY_CACHE_TABLE_NAME "query_cache"

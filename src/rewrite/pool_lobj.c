@@ -29,7 +29,7 @@
 #include <netinet/in.h>
 
 #include "pool.h"
-#include "pool_lobj.h"
+#include "rewrite/pool_lobj.h"
 #include "utils/pool_relcache.h"
 #include "pool_config.h"
 

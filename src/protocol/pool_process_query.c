@@ -44,8 +44,8 @@
 
 #include "pool.h"
 #include "pool_config.h"
-#include "pool_timestamp.h"
-#include "pool_proto_modules.h"
+#include "rewrite/pool_timestamp.h"
+#include "protocol/pool_proto_modules.h"
 #include "utils/pool_relcache.h"
 #include "utils/pool_stream.h"
 #include "context/pool_session_context.h"

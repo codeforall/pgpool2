@@ -77,6 +77,9 @@ AM_YFLAGS = -d
 
 EXTRA_DIST = sample/pgpool.pam \
 		sample/pgpool_remote_start sample/pgpool_recovery sample/pgpool_recovery_pitr \
+		sample/pgpool.conf.sample sample/pool_hba.conf.sample \
+        	sample/pgpool.conf.sample-replication sample/pgpool.conf.sample-master-slave \
+        	sample/pgpool.conf.sample-stream sample/pcp.conf.sample \
 		sample/dist_def_pgbench.sql sample/replicate_def_pgbench.sql \
 		sql/Makefile \
 		sql/insert_lock.sql sql/system_db.sql \
@@ -129,8 +132,13 @@ EXTRA_DIST = sample/pgpool.pam \
 		test/timestamp/expected/insert.out test/timestamp/expected/update.out \
 		test/timestamp/expected/misc.out test/timestamp/main.c \
 		test/timestamp/parse_schedule test/timestamp/run-test \
-		test/pgpool_setup \
-		redhat/pgpool.init redhat/pgpool.sysconfig redhat/pgpool.conf.sample.patch
+		test/pgpool_setup test/regression \
+		redhat/pgpool.init redhat/pgpool.sysconfig redhat/pgpool.conf.sample.patch \
+                redhat/rpm_installer/getsources.sh redhat/rpm_installer/config_for_script \
+                redhat/rpm_installer/install.sh redhat/rpm_installer/uninstall.sh \
+                redhat/rpm_installer/basebackup-replication.sh redhat/rpm_installer/basebackup-stream.sh \
+                redhat/rpm_installer/pgpool_recovery_pitr redhat/rpm_installer/pgpool_remote_start \
+                redhat/rpm_installer/recovery.conf redhat/rpm_installer/failover.sh
 
 
-SUBDIRS = parser libs watchdog . tools
+SUBDIRS = parser libs watchdog . tools include

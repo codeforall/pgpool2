@@ -27,7 +27,7 @@
 #ifndef POOL_TIMESTAMP_H
 #define POOL_TIMESTAMP_H
 #include "pool.h"
-#include "pool_proto_modules.h"
+#include "protocol/pool_proto_modules.h"
 #include "parser/nodes.h"
 #include "context/pool_session_context.h"
 

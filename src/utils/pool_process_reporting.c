@@ -21,7 +21,7 @@
  * Process pgPool-II "SHOW" queries.
  */
 #include "pool.h"
-#include "pool_proto_modules.h"
+#include "protocol/pool_proto_modules.h"
 #include "utils/pool_stream.h"
 #include "pool_config.h"
 #include "utils/pool_memqcache.h"

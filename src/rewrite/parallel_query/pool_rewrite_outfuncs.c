@@ -53,7 +53,7 @@
 #include "parser/pg_list.h"
 #include "parser/pg_trigger.h"
 #include "parser/parsenodes.h"
-#include "pool_rewrite_query.h"
+#include "rewrite/pool_rewrite_query.h"
 
 #define booltostr(x)  ((x) ? "true" : "false")
 
