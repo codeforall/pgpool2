@@ -26,7 +26,7 @@
 #include <string.h>
 #include <sys/sem.h>
 
-#include "pool_ipc.h"
+#include "utils/pool_ipc.h"
 
 
 #ifndef HAVE_UNION_SEMUN

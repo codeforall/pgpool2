@@ -26,7 +26,7 @@
 #include <string.h>
 #include <sys/shm.h>
 
-#include "pool_ipc.h"
+#include "utils/pool_ipc.h"
 
 
 #ifdef SHM_SHARE_MMU			/* use intimate shared memory on Solaris */

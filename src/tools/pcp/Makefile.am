@@ -1,5 +1,5 @@
 libs_dir = $(top_srcdir)/src/libs
-AM_CPPFLAGS = -D_GNU_SOURCE -I $(top_srcdir)/src/include -I @PGSQL_INCLUDE_DIR@
+AM_CPPFLAGS = -D_GNU_SOURCE -I @PGSQL_INCLUDE_DIR@
 
 bin_PROGRAMS =  pcp_stop_pgpool \
 				pcp_node_count \

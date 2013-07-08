@@ -1,5 +1,5 @@
 top_builddir = ../..
-AM_CPPFLAGS = -D_GNU_SOURCE -I $(top_srcdir)/src/include -I @PGSQL_INCLUDE_DIR@
+AM_CPPFLAGS = -D_GNU_SOURCE -I @PGSQL_INCLUDE_DIR@
 
 noinst_LIBRARIES = lib-watchdog.a
 
