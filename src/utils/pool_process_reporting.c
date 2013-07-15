@@ -24,7 +24,7 @@
 #include "protocol/pool_proto_modules.h"
 #include "utils/pool_stream.h"
 #include "pool_config.h"
-#include "utils/pool_memqcache.h"
+#include "query_cache/pool_memqcache.h"
 #include "version.h"
 
 #include <stdlib.h>

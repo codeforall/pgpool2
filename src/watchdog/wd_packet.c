@@ -44,7 +44,7 @@
 #include "pool_config.h"
 #include "watchdog/watchdog.h"
 #include "watchdog/wd_ext.h"
-#include "utils/pool_memqcache.h"
+#include "query_cache/pool_memqcache.h"
 
 typedef enum {
 	WD_SEND_TO_MASTER = 0,

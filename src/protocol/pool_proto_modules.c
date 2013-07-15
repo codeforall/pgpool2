@@ -45,7 +45,7 @@
 
 #include "pool.h"
 #include "rewrite/pool_timestamp.h"
-#include "rewrite/pool_rewrite_query.h"
+#include "parallel_query/pool_rewrite_query.h"
 #include "rewrite/pool_lobj.h"
 #include "protocol/pool_proto_modules.h"
 #include "pool_config.h"
@@ -55,7 +55,7 @@
 #include "utils/pool_select_walker.h"
 #include "utils/pool_relcache.h"
 #include "utils/pool_stream.h"
-#include "utils/pool_memqcache.h"
+#include "query_cache/pool_memqcache.h"
 #include "utils/pool_signal.h"
 
 char *copy_table = NULL;  /* copy table name */

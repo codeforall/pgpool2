@@ -60,7 +60,7 @@
 #include "parser/pool_memory.h"
 #include "parser/pool_string.h"
 #include "auth/pool_passwd.h"
-#include "utils/pool_memqcache.h"
+#include "query_cache/pool_memqcache.h"
 #include "watchdog/wd_ext.h"
 
 /*

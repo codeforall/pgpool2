@@ -51,7 +51,7 @@
 #include "context/pool_session_context.h"
 #include "context/pool_query_context.h"
 #include "utils/pool_select_walker.h"
-#include "utils/pool_memqcache.h"
+#include "query_cache/pool_memqcache.h"
 #include "utils/pool_signal.h"
 
 #ifndef FD_SETSIZE

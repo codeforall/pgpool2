@@ -31,7 +31,7 @@
 #include "parser/nodes.h"
 #include "parser/parsenodes.h"
 #include "parser/pool_memory.h"
-#include "utils/pool_memqcache.h"
+#include "query_cache/pool_memqcache.h"
 
 /*
  * Parse state transition.

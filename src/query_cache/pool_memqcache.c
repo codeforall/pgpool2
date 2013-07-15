@@ -46,9 +46,9 @@
 #include "protocol/pool_proto_modules.h"
 #include "parser/parsenodes.h"
 #include "context/pool_session_context.h"
+#include "query_cache/pool_memqcache.h"
 #include "utils/pool_relcache.h"
 #include "utils/pool_select_walker.h"
-#include "utils/pool_memqcache.h"
 #include "utils/pool_stream.h"
 #include "utils/pool_stream.h"
 

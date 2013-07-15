@@ -26,8 +26,8 @@ pgpool_SOURCES = main/main.c \
 	streaming_replication/pool_worker_child.c \
 	rewrite/pool_timestamp.c \
 	rewrite/pool_lobj.c \
-	rewrite/parallel_query/pool_rewrite_query.c \
-	rewrite/parallel_query/pool_rewrite_outfuncs.c \
+	parallel_query/pool_rewrite_query.c \
+	parallel_query/pool_rewrite_outfuncs.c \
 	utils/pool_select_walker.c \
 	utils/strlcpy.c \
 	utils/pool_params.c \

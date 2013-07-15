@@ -32,7 +32,7 @@
 #include "pool_session_context.h"
 #include "pool_query_context.h"
 #include "parser/pool_memory.h"
-#include "utils/pool_memqcache.h"
+#include "query_cache/pool_memqcache.h"
 
 /*
  * Transaction isolation mode

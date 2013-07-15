@@ -73,8 +73,8 @@ am_pgpool_OBJECTS = main/main.$(OBJEXT) main/pool_globals.$(OBJEXT) \
 	context/pool_query_context.$(OBJEXT) \
 	streaming_replication/pool_worker_child.$(OBJEXT) \
 	rewrite/pool_timestamp.$(OBJEXT) rewrite/pool_lobj.$(OBJEXT) \
-	rewrite/parallel_query/pool_rewrite_query.$(OBJEXT) \
-	rewrite/parallel_query/pool_rewrite_outfuncs.$(OBJEXT) \
+	parallel_query/pool_rewrite_query.$(OBJEXT) \
+	parallel_query/pool_rewrite_outfuncs.$(OBJEXT) \
 	utils/pool_select_walker.$(OBJEXT) utils/strlcpy.$(OBJEXT) \
 	utils/pool_params.$(OBJEXT) utils/ps_status.$(OBJEXT) \
 	utils/pool_shmem.$(OBJEXT) utils/pool_error.$(OBJEXT) \
@@ -331,8 +331,8 @@ pgpool_SOURCES = main/main.c \
 	streaming_replication/pool_worker_child.c \
 	rewrite/pool_timestamp.c \
 	rewrite/pool_lobj.c \
-	rewrite/parallel_query/pool_rewrite_query.c \
-	rewrite/parallel_query/pool_rewrite_outfuncs.c \
+	parallel_query/pool_rewrite_query.c \
+	parallel_query/pool_rewrite_outfuncs.c \
 	utils/pool_select_walker.c \
 	utils/strlcpy.c \
 	utils/pool_params.c \
@@ -622,18 +622,18 @@ rewrite/pool_timestamp.$(OBJEXT): rewrite/$(am__dirstamp) \
 	rewrite/$(DEPDIR)/$(am__dirstamp)
 rewrite/pool_lobj.$(OBJEXT): rewrite/$(am__dirstamp) \
 	rewrite/$(DEPDIR)/$(am__dirstamp)
-rewrite/parallel_query/$(am__dirstamp):
-	@$(MKDIR_P) rewrite/parallel_query
-	@: > rewrite/parallel_query/$(am__dirstamp)
-rewrite/parallel_query/$(DEPDIR)/$(am__dirstamp):
-	@$(MKDIR_P) rewrite/parallel_query/$(DEPDIR)
-	@: > rewrite/parallel_query/$(DEPDIR)/$(am__dirstamp)
-rewrite/parallel_query/pool_rewrite_query.$(OBJEXT):  \
-	rewrite/parallel_query/$(am__dirstamp) \
-	rewrite/parallel_query/$(DEPDIR)/$(am__dirstamp)
-rewrite/parallel_query/pool_rewrite_outfuncs.$(OBJEXT):  \
-	rewrite/parallel_query/$(am__dirstamp) \
-	rewrite/parallel_query/$(DEPDIR)/$(am__dirstamp)
+parallel_query/$(am__dirstamp):
+	@$(MKDIR_P) parallel_query
+	@: > parallel_query/$(am__dirstamp)
+parallel_query/$(DEPDIR)/$(am__dirstamp):
+	@$(MKDIR_P) parallel_query/$(DEPDIR)
+	@: > parallel_query/$(DEPDIR)/$(am__dirstamp)
+parallel_query/pool_rewrite_query.$(OBJEXT):  \
+	parallel_query/$(am__dirstamp) \
+	parallel_query/$(DEPDIR)/$(am__dirstamp)
+parallel_query/pool_rewrite_outfuncs.$(OBJEXT):  \
+	parallel_query/$(am__dirstamp) \
+	parallel_query/$(DEPDIR)/$(am__dirstamp)
 utils/$(am__dirstamp):
 	@$(MKDIR_P) utils
 	@: > utils/$(am__dirstamp)
@@ -686,6 +686,8 @@ mostlyclean-compile:
 	-rm -f context/pool_session_context.$(OBJEXT)
 	-rm -f main/main.$(OBJEXT)
 	-rm -f main/pool_globals.$(OBJEXT)
+	-rm -f parallel_query/pool_rewrite_outfuncs.$(OBJEXT)
+	-rm -f parallel_query/pool_rewrite_query.$(OBJEXT)
 	-rm -f pcp_con/pcp_child.$(OBJEXT)
 	-rm -f pcp_con/recovery.$(OBJEXT)
 	-rm -f protocol/child.$(OBJEXT)
@@ -695,8 +697,6 @@ mostlyclean-compile:
 	-rm -f protocol/pool_proto_modules.$(OBJEXT)
 	-rm -f query_cache/pool_memqcache.$(OBJEXT)
 	-rm -f query_cache/pool_query_cache.$(OBJEXT)
-	-rm -f rewrite/parallel_query/pool_rewrite_outfuncs.$(OBJEXT)
-	-rm -f rewrite/parallel_query/pool_rewrite_query.$(OBJEXT)
 	-rm -f rewrite/pool_lobj.$(OBJEXT)
 	-rm -f rewrite/pool_timestamp.$(OBJEXT)
 	-rm -f streaming_replication/pool_worker_child.$(OBJEXT)
@@ -730,6 +730,8 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@context/$(DEPDIR)/pool_session_context.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@main/$(DEPDIR)/main.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@main/$(DEPDIR)/pool_globals.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@parallel_query/$(DEPDIR)/pool_rewrite_outfuncs.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@parallel_query/$(DEPDIR)/pool_rewrite_query.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@pcp_con/$(DEPDIR)/pcp_child.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@pcp_con/$(DEPDIR)/recovery.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@protocol/$(DEPDIR)/child.Po@am__quote@
@@ -741,8 +743,6 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@query_cache/$(DEPDIR)/pool_query_cache.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@rewrite/$(DEPDIR)/pool_lobj.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@rewrite/$(DEPDIR)/pool_timestamp.Po@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@rewrite/parallel_query/$(DEPDIR)/pool_rewrite_outfuncs.Po@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@rewrite/parallel_query/$(DEPDIR)/pool_rewrite_query.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@streaming_replication/$(DEPDIR)/pool_worker_child.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@system_db/$(DEPDIR)/pool_system.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@utils/$(DEPDIR)/getopt_long.Po@am__quote@
@@ -1065,6 +1065,8 @@ distclean-generic:
 	-rm -f context/$(am__dirstamp)
 	-rm -f main/$(DEPDIR)/$(am__dirstamp)
 	-rm -f main/$(am__dirstamp)
+	-rm -f parallel_query/$(DEPDIR)/$(am__dirstamp)
+	-rm -f parallel_query/$(am__dirstamp)
 	-rm -f pcp_con/$(DEPDIR)/$(am__dirstamp)
 	-rm -f pcp_con/$(am__dirstamp)
 	-rm -f protocol/$(DEPDIR)/$(am__dirstamp)
@@ -1073,8 +1075,6 @@ distclean-generic:
 	-rm -f query_cache/$(am__dirstamp)
 	-rm -f rewrite/$(DEPDIR)/$(am__dirstamp)
 	-rm -f rewrite/$(am__dirstamp)
-	-rm -f rewrite/parallel_query/$(DEPDIR)/$(am__dirstamp)
-	-rm -f rewrite/parallel_query/$(am__dirstamp)
 	-rm -f streaming_replication/$(DEPDIR)/$(am__dirstamp)
 	-rm -f streaming_replication/$(am__dirstamp)
 	-rm -f system_db/$(DEPDIR)/$(am__dirstamp)
@@ -1091,7 +1091,7 @@ clean: clean-recursive
 clean-am: clean-binPROGRAMS clean-generic clean-libtool mostlyclean-am
 
 distclean: distclean-recursive
-	-rm -rf auth/$(DEPDIR) config/$(DEPDIR) context/$(DEPDIR) main/$(DEPDIR) pcp_con/$(DEPDIR) protocol/$(DEPDIR) query_cache/$(DEPDIR) rewrite/$(DEPDIR) rewrite/parallel_query/$(DEPDIR) streaming_replication/$(DEPDIR) system_db/$(DEPDIR) utils/$(DEPDIR)
+	-rm -rf auth/$(DEPDIR) config/$(DEPDIR) context/$(DEPDIR) main/$(DEPDIR) parallel_query/$(DEPDIR) pcp_con/$(DEPDIR) protocol/$(DEPDIR) query_cache/$(DEPDIR) rewrite/$(DEPDIR) streaming_replication/$(DEPDIR) system_db/$(DEPDIR) utils/$(DEPDIR)
 	-rm -f Makefile
 distclean-am: clean-am distclean-compile distclean-generic \
 	distclean-tags
@@ -1137,7 +1137,7 @@ install-ps-am:
 installcheck-am:
 
 maintainer-clean: maintainer-clean-recursive
-	-rm -rf auth/$(DEPDIR) config/$(DEPDIR) context/$(DEPDIR) main/$(DEPDIR) pcp_con/$(DEPDIR) protocol/$(DEPDIR) query_cache/$(DEPDIR) rewrite/$(DEPDIR) rewrite/parallel_query/$(DEPDIR) streaming_replication/$(DEPDIR) system_db/$(DEPDIR) utils/$(DEPDIR)
+	-rm -rf auth/$(DEPDIR) config/$(DEPDIR) context/$(DEPDIR) main/$(DEPDIR) parallel_query/$(DEPDIR) pcp_con/$(DEPDIR) protocol/$(DEPDIR) query_cache/$(DEPDIR) rewrite/$(DEPDIR) streaming_replication/$(DEPDIR) system_db/$(DEPDIR) utils/$(DEPDIR)
 	-rm -f Makefile
 maintainer-clean-am: distclean-am maintainer-clean-generic
 

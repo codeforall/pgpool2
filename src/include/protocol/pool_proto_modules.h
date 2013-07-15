@@ -31,7 +31,7 @@
 #include "parser/pool_memory.h"
 #include "parser/pg_list.h"
 #include "parser/parsenodes.h"
-#include "rewrite/pool_rewrite_query.h"
+#include "parallel_query/pool_rewrite_query.h"
 #include "context/pool_session_context.h"
 #include "utils/pool_process_reporting.h"
 
