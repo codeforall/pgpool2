@@ -33,45 +33,51 @@
 
 static volatile bool * WD_Locks;
 
-int wd_init_interlock(void);
-void wd_start_interlock(void);
-void wd_end_interlock(void);
-void wd_leave_interlock(void);
-void wd_wait_for_lock(WD_LOCK_ID lock_id);
-bool wd_am_I_lock_holder(void);
-bool wd_is_locked(WD_LOCK_ID lock_id);
-void wd_set_lock(WD_LOCK_ID lock_id, bool value);
-int wd_unlock(WD_LOCK_ID lock_id);
-
 static void wd_update_lock_holder(void);
 static int wd_assume_lock_holder(void);
 static void wd_resign_lock_holder(void);
 static void wd_lock_all(void);
+static void wd_confirm_contactable(void);
+
 static void sleep_in_waiting(void);
+
+#define WD_INTERLOCK_WAIT_MSEC 500
+#define WD_INTERLOCK_TIMEOUT_SEC 10
+#define WD_INTERLOCK_WAIT_COUNT ((int) ((WD_INTERLOCK_TIMEOUT_SEC * 1000)/WD_INTERLOCK_WAIT_MSEC))
 
 /* initialize interlock */
 int
 wd_init_interlock(void)
 {
+	int alloc_size;
+
 	/* allocate WD_lock_holder */
 	if (WD_Locks == NULL)
 	{
-		WD_Locks = pool_shared_memory_create(sizeof(WD_Locks));
+		alloc_size = sizeof(bool) * WD_MAX_LOCK_NUM;
+
+		WD_Locks = pool_shared_memory_create(alloc_size);
 		if (WD_Locks == NULL)
 		{
 			pool_error("wd_init_interlock: failed to allocate WD_Locks");
 			return WD_NG;
 		}
-		memset((void *)WD_Locks, 0, sizeof(WD_Locks) * WD_MAX_LOCK_NUM);
+		memset((void *)WD_Locks, 0, alloc_size);
 	}
 
 	return WD_OK;
 }
 
 /* notify to start interlocking */
-void wd_start_interlock(void)
+void wd_start_interlock(bool by_health_check)
 {
+	int count;
+	int node_id;
+
 	pool_log("wd_start_interlock: start interlocking");
+
+	/* confirm other pgpools are contactable */
+	wd_confirm_contactable();
 
 	/* lock all the resource */
 	wd_lock_all();
@@ -82,34 +88,52 @@ void wd_start_interlock(void)
 	/* try to assume lock holder */
 	wd_assume_lock_holder();
 
+	/*
+	 * If it is due to DB down detection by healthcheck, send failover request
+	 * to other pgpools because detection of DB down on the others may be late.
+	 */
+	if (by_health_check && wd_am_I_lock_holder())
+	{
+		node_id = Req_info->node_id[0];
+		wd_degenerate_backend_set(&node_id, 1);
+	}
+
 	/* wait for all pgpools starting interlock */
+	count = WD_INTERLOCK_WAIT_COUNT;
 	while (wd_is_locked(WD_FAILOVER_START_LOCK))
 	{
 		if (WD_MYSELF->status == WD_DOWN)
 		{
 			wd_set_lock_holder(WD_MYSELF, false);
-			break;
+			return;
 		}
 
-		if (wd_am_I_lock_holder() && wd_is_interlocking_all())
+		if (wd_am_I_lock_holder() && wd_are_interlocking_all())
 		{
 			wd_unlock(WD_FAILOVER_START_LOCK);
 		}
 
 		sleep_in_waiting();
+		if (--count < 0)
+		{
+			pool_error("wd_start_interlock: timed out");
+			break;
+		}
 	}
-
 }
 
 /* notify to end interlocking */
 void wd_end_interlock(void)
 {
+	int count;
+
 	pool_log("wd_end_interlock: end interlocking");
 
 	wd_set_interlocking(WD_MYSELF, false);
 	wd_send_packet_no(WD_END_INTERLOCK);
 
 	/* wait for all pgpools ending interlock */
+	count = WD_INTERLOCK_WAIT_COUNT;
 	while (wd_is_locked(WD_FAILOVER_END_LOCK))
 	{
 		if (WD_MYSELF->status == WD_DOWN)
@@ -124,7 +148,15 @@ void wd_end_interlock(void)
 		}
 
 		sleep_in_waiting();
+		if (--count < 0)
+		{
+			pool_error("wd_end_interlock: timed out");
+			break;
+		}
 	}
+
+	if (wd_am_I_lock_holder())
+		wd_resign_lock_holder();
 
 	wd_clear_interlocking_info();
 }
@@ -150,18 +182,26 @@ bool wd_am_I_lock_holder(void)
 /* waiting for the lock or to be lock holder */
 void wd_wait_for_lock(WD_LOCK_ID lock_id)
 {
+	int count;
+
+	count = WD_INTERLOCK_WAIT_COUNT;
 	while (wd_is_locked(lock_id))
 	{
 		if (WD_MYSELF->status == WD_DOWN)
 		{
 			wd_set_lock_holder(WD_MYSELF, false);
-			break;
+			return;
 		}
 
 		if (wd_am_I_lock_holder())
 			break;
 
 		sleep_in_waiting();
+		if (--count < 0)
+		{
+			pool_error("wd_wait_for_lock: timed out");
+			break;
+		}
 	}
 }
 
@@ -180,14 +220,15 @@ wd_assume_lock_holder(void)
 		return WD_NG;
 
 	/*
-	 * confirm contatable master exists,
-	 * otherwise WD_STAND_FOR_LOCK_HOLDER always returns WD_OK,
-	 * eventually multiple pgpools become lock_holder
+	 * confirm contatable master exists;
+	 * If contactable master doesn't exists, WD_STAND_FOR_LOCK_HOLDER always
+	 * returns WD_OK, eventually multiple pgpools can become lock_holder.
+	 * Down of the host on which master pgpool was working is the case.
 	 */
 	while (!wd_is_contactable_master())
 	{
 		if (WD_MYSELF->status == WD_DOWN)
-			break;
+			return WD_NG;
 	}
 
 	/* I'm master and not lock holder, or I succeeded to become lock holder */
@@ -207,7 +248,7 @@ wd_assume_lock_holder(void)
 
 /*
  * update information of who's lock holder
- * Note that the lock holder pgpool can go down accidentally.
+ * Note that a lock holder pgpool may go down accidentally during interlocking.
  */
 static void
 wd_update_lock_holder(void)
@@ -216,7 +257,7 @@ wd_update_lock_holder(void)
 	while (wd_get_lock_holder() == NULL)
 	{
 		if (WD_MYSELF->status == WD_DOWN)
-			break;
+			return;
 
 		wd_assume_lock_holder();
 	}
@@ -267,9 +308,30 @@ wd_unlock(WD_LOCK_ID lock_id)
 	return rtn;
 }
 
+/* confirm other pgpools are contactable */
+static void
+wd_confirm_contactable(void)
+{
+	int count;
+
+	count = WD_INTERLOCK_WAIT_COUNT;
+	while (!wd_are_contactable_all())
+	{
+		if (WD_MYSELF->status == WD_DOWN)
+			return;
+
+		sleep_in_waiting();
+		if (--count < 0)
+		{
+			pool_error("wd_confirm_contactable: timed out");
+			break;
+		}
+	}
+}
+
 static void
 sleep_in_waiting(void)
 {
-	struct timeval t = {0, 100000};
+	struct timeval t = {0, WD_INTERLOCK_WAIT_MSEC * 1000};
 	select(0, NULL, NULL, NULL, &t);
 }

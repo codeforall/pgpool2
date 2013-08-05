@@ -68,7 +68,7 @@ install -d %{buildroot}%{_sysconfdir}/sysconfig
 install -m 644 %{SOURCE2} %{buildroot}%{_sysconfdir}/sysconfig/pgpool
 
 # install to PostgreSQL
-export PATH=$PATH:%{pghome}/bin
+export PATH=%{pghome}/bin:$PATH
 cd sql/pgpool-recovery/
 make %{?_smp_flags} DESTDIR=%{buildroot} install
 cd ../../
@@ -110,6 +110,7 @@ fi
 %{_bindir}/pcp_stop_pgpool
 %{_bindir}/pcp_recovery_node
 %{_bindir}/pcp_systemdb_info
+%{_bindir}/pcp_watchdog_info
 %{_bindir}/pg_md5
 %{_mandir}/man8/pgpool*
 %{_datadir}/%{name}/insert_lock.sql

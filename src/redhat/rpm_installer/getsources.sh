@@ -2,20 +2,36 @@
 
 username=`whoami`
 rpm_dir=$HOME/rpm
-git_dir=$HOME/git
-pgpool_src_dir=$git_dir/pgpool2/master
-admin_src_dir=$git_dir/pgpooladmin
-pgdata_template=$HOME/local/pgsql/data
 work_dir=`pwd`/work
+
+# ---------------------------------------------------------------------
+# configuration
+# ---------------------------------------------------------------------
+
+git_dir=$HOME/git
+
+## pgpool-II
+pgpool_src_dir=$git_dir/pgpool2
+pgpool_tarball_dir=$pgpool_src_dir
+pgpool_version=3.3.0
+
+## pgpoolAdmin
+admin_src_dir=$git_dir/pgpooladmin
+admin_tarball_dir=$admin_src_dir/tools
+admin_version=3.3.0
+
+## postgresql92
+bin_path=/usr/pgsql-9.2/bin
+export PATH=$bin_path:$PATH
 
 echo "* Setup starts."
 echo
 
 # ---------------------------------------------------------------------
-# setup for rpmnbuild
+# setup for rpmbuild
 # ---------------------------------------------------------------------
 
-echo -n "    Setup for rpmbild ... "
+echo -n "    Setup for rpmbuild ... "
 
 mkdir -p $rpm_dir/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
 
@@ -47,10 +63,21 @@ cp -f $admin_src_dir/pgpoolAdmin.spec $work_dir
 cd $pgpool_src_dir
 make dist > /dev/null 2>&1
 if [ $? -ne 0 ]; then
-    "Failed."
+    echo "Failed."
     exit
 fi
-mv pgpool-II-*.tar.gz $rpm_dir/SOURCES
+if [ ! -f $pgpool_tarball_dir/pgpool-II-$pgpool_version.tar.gz ]; then
+    echo "$pgpool_tarball_dir/pgpool-II-$pgpool_version.tar.gz not found."
+    exit
+fi
+mv pgpool-II-$pgpool_version.tar.gz $rpm_dir/SOURCES
+
+# pgpoolAdmin-*.tar.gz
+if [ ! -f $admin_tarball_dir/pgpoolAdmin-$admin_version.tar.gz ]; then
+    echo "$admin_tarball_dir/pgpoolAdmin-$admin_version.tar.gz not found."
+    exit
+fi
+cp $admin_tarball_dir/pgpoolAdmin-$admin_version.tar.gz $rpm_dir/SOURCES
 
 # pgpool.conf.sample.patch, pgpool.init, pgpool.sysconfig
 cp -f $pgpool_src_dir/redhat/pgpool.conf.sample.patch $rpm_dir/SOURCES/
@@ -69,7 +96,6 @@ echo -n "    Get sources for installer ... "
 mkdir -p $work_dir/installer
 cp -f $pgpool_src_dir/redhat/rpm_installer/install.sh   $work_dir/installer/
 cp -f $pgpool_src_dir/redhat/rpm_installer/uninstall.sh $work_dir/installer/
-cp -f $pgpool_src_dir/redhat/rpm_installer/ssh_wo_password.sh $work_dir/installer/
 cp -f $pgpool_src_dir/COPYING                           $work_dir/installer/
 
 # each conf files
@@ -101,8 +127,8 @@ echo "* Setup Finished. See \"work\" directory."
 echo
 echo "* Next ..."
 echo
-echo "  - rpmbuild -ba pgpool.spec"
-echo "  - rpmbuild -ba pgpoolAdmin.spec"
-echo "  - move rpms (except for *.src.rpm) to $work_dir/installer/"
-echo "  - create tar ball from $work_dir/installer/"
+echo "  - rpmbuild -ba work/pgpool.spec"
+echo "  - rpmbuild -ba work/pgpoolAdmin.spec"
+echo "  - move ~/rpm/RPMS/../pgpool*.rpm (except for *.src.rpm) to work/installer/"
+echo "  - create tar ball from work/installer/"
 echo

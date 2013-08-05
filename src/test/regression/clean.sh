@@ -6,6 +6,7 @@ export PGPOOL_SETUP=$HOME/bin/pgpool_setup
 log=$dir/log
 
 rm -fr $log
+rm -fr $dir/temp
 
 cd tests
 dirs=`ls`
@@ -15,3 +16,6 @@ do
 	rm -fr testdir *~
 	cd ..
 done
+
+rm -fr $dir/tests/004.watchdog/master
+rm -fr $dir/tests/004.watchdog/standby

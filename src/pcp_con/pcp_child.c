@@ -56,6 +56,7 @@
 #include "pool_config.h"
 #include "context/pool_process_context.h"
 #include "utils/pool_process_reporting.h"
+#include "watchdog/wd_ext.h"
 
 #define MAX_FILE_LINE_LEN    512
 #define MAX_USER_PASSWD_LEN  128
@@ -747,6 +748,85 @@ pcp_do_child(int unix_fd, int inet_fd, char *pcp_conf_file)
 				break;
 			}
 
+			case 'W':			/* watchdog info */
+			{
+				int wd_index;
+				int wsize;
+
+				WdInfo *wi = NULL;
+
+				if (!pool_config->use_watchdog)
+				{
+					char code[] = "watchdog not enabled";
+
+					pcp_write(frontend, "e", 1);
+					wsize = htonl(sizeof(code) + sizeof(int));
+					pcp_write(frontend, &wsize, sizeof(int));
+					pcp_write(frontend, code, sizeof(code));
+					if (pcp_flush(frontend) < 0)
+					{
+						pool_error("pcp_child: pcp_flush() failed. reason: %s", strerror(errno));
+						exit(1);
+					}
+
+					pool_debug("pcp_child: watcdhog not enabled");
+					break;
+				}
+
+				wd_index = atoi(buf);
+				wi = wd_get_watchdog_info(wd_index);
+
+				if (wi == NULL) {
+					char code[] = "Invalid watchdog index";
+
+					pcp_write(frontend, "e", 1);
+					wsize = htonl(sizeof(code) + sizeof(int));
+					pcp_write(frontend, &wsize, sizeof(int));
+					pcp_write(frontend, code, sizeof(code));
+					if (pcp_flush(frontend) < 0)
+					{
+						pool_error("pcp_child: pcp_flush() failed. reason: %s", strerror(errno));
+						exit(1);
+					}
+
+					pool_debug("pcp_child: invalid watchdog index");
+				}
+				else
+				{
+					char code[] = "CommandComplete";
+					char pgpool_port_str[6];
+					char wd_port_str[6];
+					char status[2];
+
+					snprintf(pgpool_port_str, sizeof(pgpool_port_str), "%d", wi->pgpool_port);
+					snprintf(wd_port_str, sizeof(wd_port_str), "%d", wi->wd_port);
+					snprintf(status, sizeof(status), "%d", wi->status);
+
+					pcp_write(frontend, "w", 1);
+					wsize = htonl(sizeof(code) +
+								  strlen(wi->hostname)+1 +
+								  strlen(pgpool_port_str)+1 +
+								  strlen(wd_port_str)+1 +
+								  strlen(status)+1 +
+								  sizeof(int));
+					pcp_write(frontend, &wsize, sizeof(int));
+					pcp_write(frontend, code, sizeof(code));
+
+					pcp_write(frontend, wi->hostname, strlen(wi->hostname)+1);
+					pcp_write(frontend, pgpool_port_str, strlen(pgpool_port_str)+1);
+					pcp_write(frontend, wd_port_str, strlen(wd_port_str)+1);
+					pcp_write(frontend, status, strlen(status)+1);
+					if (pcp_flush(frontend) < 0)
+					{
+						pool_error("pcp_child: pcp_flush() failed. reason: %s", strerror(errno));
+						exit(1);
+					}
+
+					pool_debug("pcp_child: retrieved node information from shared memory");
+				}
+				break;
+			}
+
 			case 'D':			/* detach node */
 			case 'd':			/* detach node gracefully */
 			{
@@ -834,6 +914,22 @@ pcp_do_child(int unix_fd, int inet_fd, char *pcp_conf_file)
 				int r;
 
 				node_id = atoi(buf);
+
+				if ( (node_id < 0) || (node_id >= pool_config->backend_desc->num_backends) )
+				{
+					char code[] = "NodeIdOutOfRange";
+					pool_error("pcp_child: node id %d is not valid", node_id);
+					pcp_write(frontend, "e", 1);
+					wsize = htonl(sizeof(code) + sizeof(int));
+					pcp_write(frontend, &wsize, sizeof(int));
+					pcp_write(frontend, code, sizeof(code));
+					if (pcp_flush(frontend) < 0)
+					{
+						pool_error("pcp_child: pcp_flush() failed. reason: %s", strerror(errno));
+						exit(1);
+					}
+					exit(1);
+				}
 
 				if ((!REPLICATION &&
 					 !(MASTER_SLAVE &&

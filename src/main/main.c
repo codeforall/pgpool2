@@ -89,6 +89,10 @@
 		} \
     } while (0)
 
+#define CLEAR_ALARM \
+	do { \
+			pool_debug("health check: clearing alarm"); \
+    } while (alarm(0) > 0)
 
 #define PGPOOLMAXLITSENQUEUELENGTH 10000
 static void daemonize(void);
@@ -718,6 +722,7 @@ int main(int argc, char **argv)
 				 * communication path failure much earlier before
 				 * TCP/IP stack detects it.
 				 */
+				CLEAR_ALARM;
 				pool_signal(SIGALRM, health_check_timer_handler);
 				alarm(pool_config->health_check_timeout);
 			}
@@ -742,6 +747,7 @@ int main(int argc, char **argv)
 
 					retrycnt++;
 					pool_signal(SIGALRM, SIG_IGN);	/* Cancel timer */
+					CLEAR_ALARM;
 
 					if (!pool_config->parallel_mode)
 					{
@@ -797,6 +803,7 @@ int main(int argc, char **argv)
 				{
 					sys_retrycnt++;
 					pool_signal(SIGALRM, SIG_IGN);
+					CLEAR_ALARM;
 
 					if (sys_retrycnt > NUM_BACKENDS)
 					{
@@ -828,6 +835,7 @@ int main(int argc, char **argv)
 			{
 				/* seems OK. cancel health check timer */
 				pool_signal(SIGALRM, SIG_IGN);
+				CLEAR_ALARM;
 			}
 
 			sleep_time = pool_config->health_check_period;
@@ -1187,6 +1195,7 @@ pid_t pcp_fork_a_child(int unix_fd, int inet_fd, char *pcp_conf_file)
 
 		/* call PCP child main */
 		POOL_SETMASK(&UnBlockSig);
+		health_check_timer_expired = 0;
 		reload_config_request = 0;
 		run_as_pcp_child = true;
 		pcp_do_child(unix_fd, inet_fd, pcp_conf_file);
@@ -1228,6 +1237,7 @@ pid_t fork_a_child(int unix_fd, int inet_fd, int id)
 
 		/* call child main */
 		POOL_SETMASK(&UnBlockSig);
+		health_check_timer_expired = 0;
 		reload_config_request = 0;
 		my_proc_id = id;
 		run_as_pcp_child = false;
@@ -1270,6 +1280,7 @@ pid_t worker_fork_a_child()
 
 		/* call child main */
 		POOL_SETMASK(&UnBlockSig);
+		health_check_timer_expired = 0;
 		reload_config_request = 0;
 		do_worker_child();
 	}
@@ -1686,6 +1697,7 @@ static void failover(void)
 {
 	int i;
 	int node_id;
+	bool by_health_check;
 	int new_master;
 	int new_primary;
 	int nodes[MAX_NUM_BACKENDS];
@@ -1750,17 +1762,8 @@ static void failover(void)
 	/* start of command inter-lock with watchdog */
 	if (pool_config->use_watchdog)
 	{
-		wd_start_interlock();
-
-		/*
-		 * if it is due to DB down detection by healthcheck, send failover request
-		 * to other pgpools because detection of DB down on the others may be late.
-		 */
-		if (wd_am_I_lock_holder() &&
-		    !failover_request && Req_info->kind == NODE_DOWN_REQUEST)
-		{
-			wd_degenerate_backend_set(&node_id, 1);
-		}
+		by_health_check = (!failover_request && Req_info->kind==NODE_DOWN_REQUEST);
+		wd_start_interlock(by_health_check);
 	}
 
 	/* failback request? */
@@ -2081,6 +2084,19 @@ static void failover(void)
 	{
 		for (i=0;i<pool_config->num_init_children;i++)
 		{
+
+			/*
+			 * Try to kill pgpool child because previous kill signal
+			 * may not be received by pgpool child. This could happen
+			 * if multiple PostgreSQL are going down (or even starting
+			 * pgpool, without starting PostgreSQL can trigger this).
+			 * Child calls degenerate_backend() and it tries to aquire
+			 * semaphore to write a failover request. In this case the
+			 * signal mask is set as well, thus signals are never
+			 * received.
+			 */
+			kill(process_info[i].pid, SIGQUIT);
+
 			process_info[i].pid = fork_a_child(unix_fd, inet_fd, i);
 			process_info[i].start_time = time(NULL);
 		}

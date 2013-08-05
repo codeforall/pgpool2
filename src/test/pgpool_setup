@@ -16,16 +16,21 @@
 # directory for *testing* purpose.
 # Do not use this tool for production environment!
 #
-# usage: pgpool_setup [-m r|s][-n num_clusters][--no-stop]
+# usage: pgpool_setup [-m r|s][-n num_clusters][-p base_port][--no-stop]
 # -m s: create an installation as streaming replication mode.
 # (the default)
 # -m r: create an installation as native replication mode.
-#-n num_clusters: create num_clusters PostgreSQL database cluster nodes
-#--no-stop: do not stop pgpool and PostgreSQL after the work
+# -n num_clusters: create num_clusters PostgreSQL database cluster nodes
+# -p base_port: specify base port. The first PostgreSQL node's port is
+#  base_port. Second PostgreSQL node's port is base_port+1... nth
+#  PostgreSQL node's port is base_port+n-1, pgpool port is
+#  base_port+n, pcp port is base_port+n+1.
+# --no-stop: do not stop pgpool and PostgreSQL after the work
 #
 # The user run this script will become the PostgreSQL super user as
 # well.  Current directory must be empty.  Assume that appropreate
 # pgpool and PostgreSQL binaries are in the command search path.
+# The user must have passwordless access to localhost over SSH.
 #
 # Rayout after executing this script:
 #  data[0-]: PostgreSQL database clusters
@@ -49,7 +54,7 @@ BASEPORT=11000
 # Default number of PostgreSQL database clusters
 NUMCLUSTERS=2
 # Where to look for pgpool.conf.sample*
-PGPOOLDIR=/usr/local/etc
+PGPOOLDIR=$PGPOOL_INSTALL_DIR/etc
 # LD_LIBRARY_PATH 
 LPATH=/usr/local/pgsql/lib
 # initdb args
@@ -65,7 +70,6 @@ WHOAMI=`whoami`
 BASEDIR=`pwd`
 
 # PostgreSQL bin directory
-PGBIN=`pg_config --bindir` || (echo "$0: cannot locate pg_config";exit 1)
 INITDB=$PGBIN/initdb
 PG_CTL=$PGBIN/pg_ctl
 PSQL=$PGBIN/psql
@@ -101,8 +105,8 @@ cat >> $FAILOVER_SCRIPT <<'EOF'
 #                  %M = old master node id
 #                  %H = new master node host name
 #                  %P = old primary node id
-#                  %% = '%' character
 #                  %R = new master database cluster path
+#                  %r = new master port number
 #                  %% = '%' character
 failed_node_id=$1
 failed_host_name=$2
@@ -123,8 +127,8 @@ cluster1=$mydir/data1
 date >> $log
 echo "failed_node_id $failed_node_id failed_host_name $failed_host_name failed_port $failed_port failed_db_cluster $failed_db_cluster new_master_id $new_master_id old_master_id $old_master_id new_master_host_name $new_master_host_name old_primary_node_id $old_primary_node_id new_master_port_number $new_master_port_number new_master_db_cluster $new_master_db_cluster" >> $log
 
-if [ $failed_node_id = $old_primary_node_id ];then	# master failed
-    if [ $failed_node_id = 0 ];then
+if [ a"$failed_node_id" = a"$old_primary_node_id" ];then	# master failed
+    if [ a"$failed_node_id" = a"0" ];then
 		echo $pg_ctl -D $cluster1 promote >>$log	# let standby take over
 		$pg_ctl -D $cluster1 promote >>$log	# let standby take over
     else
@@ -163,8 +167,8 @@ cat >> $FOLLOW_MASTER_SCRIPT <<'EOF'
 #                  %M = old master node id
 #                  %H = new master node host name
 #                  %P = old primary node id
-#                  %% = '%' character
 #                  %R = new master database cluster path
+#                  %r = new master port number
 #                  %% = '%' character
 failed_node_id=$1
 failed_host_name=$2
@@ -559,6 +563,23 @@ function wait_for_pgpool_startup {
 	done
 }
 
+#-------------------------------------------
+# wait for pgpool reload finished
+#-------------------------------------------
+function wait_for_pgpool_reload {
+	timeout=20
+	num_node=$1
+
+	while [ $timeout -gt  0 ]
+	do
+		N=`$PSQL -p $PGPOOL_PORT -c "show pool_status" test | grep backend_data | wc -l`
+		if [ $N = $num_node ];then
+			break;
+		fi
+		timeout=`expr $timeout - 1`
+	done
+}
+
 #################################################################################
 #
 # main script
@@ -566,12 +587,12 @@ function wait_for_pgpool_startup {
 ################################################################################
 function usage()
 {
-	echo "usage: $0 [-m r|s] [-n num_clusters] [--no-stop] ";exit 1
+	echo "usage: $0 [-m r|s] [-n num_clusters] [-p base_port] [--no-stop] ";exit 1
 }
 
 #-------------------------------------------
 # Argument check
-# usage: $0 [-m r|s] [-n num_clusters] [--no-stop]"
+# usage: $0 [-m r|s] [-n num_clusters] [-p base_port] [--no-stop]"
 #-------------------------------------------
 #
 # default mode is streaming replication mode
@@ -590,6 +611,9 @@ do
 	elif [ $1 = "-n" ];then
 		shift
 		NUMCLUSTERS=$1
+	elif [ $1 = "-p" ];then
+		shift
+		BASEPORT=$1
 	elif [ $1 = "--no-stop" ];then
 		shift
 		NO_STOP="true"
@@ -642,10 +666,10 @@ echo "LD_LIBRARY_PATH=$LPATH" > $STARTALL
 echo 'dir=`pwd`' >> $STARTALL
 chmod 755 $STARTALL
 echo 'dir=`pwd`' > $SHUTDOWNALL
-echo 'pgpool -f $dir/etc/pgpool.conf -m f stop' >> $SHUTDOWNALL
+echo '$PGPOOL_INSTALL_DIR/bin/pgpool -f $dir/etc/pgpool.conf -m f stop' >> $SHUTDOWNALL
 chmod 755 $SHUTDOWNALL
 echo 'dir=`pwd`' > $PGPOOL_RELOAD
-echo 'pgpool -f $dir/etc/pgpool.conf reload' >> $PGPOOL_RELOAD
+echo '$PGPOOL_INSTALL_DIR/bin/pgpool -f $dir/etc/pgpool.conf reload' >> $PGPOOL_RELOAD
 chmod 755 $PGPOOL_RELOAD
 
 #-------------------------------------------
@@ -713,15 +737,15 @@ echo "pid_file_name = '$BASEDIR/run/pgpool.pid'" >> $CONF
 test ! -d log && mkdir log
 echo "logdir = '$BASEDIR/log'" >> $CONF
 
-echo 'pgpool -D -n -f $dir/etc/pgpool.conf -F $dir/etc/pcp.conf -a $dir/etc/pool_hba.conf > $dir/log/pgpool.log 2>&1 &' >> $STARTALL
+echo '$PGPOOL_INSTALL_DIR/bin/pgpool -D -n -f $dir/etc/pgpool.conf -F $dir/etc/pcp.conf -a $dir/etc/pool_hba.conf > $dir/log/pgpool.log 2>&1 &' >> $STARTALL
 
 # create pcp.conf
 cp $PGPOOLDIR/pcp.conf.sample etc/pcp.conf
 echo -n "${WHOAMI}:" >> etc/pcp.conf
-pg_md5 $WHOAMI >> etc/pcp.conf
+$PGPOOL_INSTALL_DIR/bin/pg_md5 $WHOAMI >> etc/pcp.conf
 
 # create pool_passwd
-pg_md5 -m -f etc/pgpool.conf -u $WHOAMI $WHOAMI
+$PGPOOL_INSTALL_DIR/bin/pg_md5 -m -f etc/pgpool.conf -u $WHOAMI $WHOAMI
 
 # create archive directory
 mkdir archivedir
@@ -752,7 +776,7 @@ EOF
 
 # temporarily start pgpool
 	echo "temporarily start pgpool-II to create standby nodes"
-	pgpool -D -n -f $BASEDIR/etc/pgpool.conf -F $BASEDIR/etc/pcp.conf -a $BASEDIR/etc/pool_hba.conf > $BASEDIR/log/pgpool.log 2>&1 &
+	$PGPOOL_INSTALL_DIR/bin/pgpool -D -n -f $BASEDIR/etc/pgpool.conf -F $BASEDIR/etc/pcp.conf -a $BASEDIR/etc/pool_hba.conf > $BASEDIR/log/pgpool.log 2>&1 &
 
 	wait_for_pgpool_startup
 
@@ -770,9 +794,10 @@ EOF
 			echo "backend_data_directory$n = '$CLUSTERDIR'" >> $CONF
 			n=`expr $n + 1`
 		done
-		pgpool -f $BASEDIR/etc/pgpool.conf reload
+		$PGPOOL_INSTALL_DIR/bin/pgpool -f $BASEDIR/etc/pgpool.conf reload
 	fi
 
+	wait_for_pgpool_reload $NUMCLUSTERS
 $PSQL -p $PGPOOL_PORT -c "show pool_nodes" test
 
 # recovery data1 and so on
@@ -780,7 +805,7 @@ $PSQL -p $PGPOOL_PORT -c "show pool_nodes" test
 	while [ $n -lt $NUMCLUSTERS ]
 	do
 		echo -n "recovery node $n..."
-		pcp_recovery_node 1 localhost $PCP_PORT $WHOAMI $WHOAMI $n
+		$PGPOOL_INSTALL_DIR/bin/pcp_recovery_node 1 localhost $PCP_PORT $WHOAMI $WHOAMI $n
 		echo "done."
 		n=`expr $n + 1`
 		if [ $n -lt $NUMCLUSTERS ];then
