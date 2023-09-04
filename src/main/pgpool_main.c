@@ -51,6 +51,7 @@
 #include "utils/memutils.h"
 #include "utils/statistics.h"
 #include "utils/pool_ipc.h"
+#include "utils/socket_stream.h"
 #include "context/pool_process_context.h"
 #include "protocol/pool_process_query.h"
 #include "protocol/pool_pg_utils.h"
@@ -210,6 +211,7 @@ volatile	User1SignalSlot *user1SignalSlot = NULL;	/* User 1 signal slot on
 														 * shmem */
 int		current_child_process_count;
 
+IPC_Endpoint *ipc_endpoints = NULL;	/* IPC endpoints for child processes */
 struct timeval random_start_time;
 
 /*
@@ -228,7 +230,7 @@ BACKEND_STATUS private_backend_status[MAX_NUM_BACKENDS];
  * con_info[pool_config->num_init_children][pool_config->max_pool][MAX_NUM_BACKENDS]
  */
 ConnectionInfo *con_info;
-
+ConnectionPoolEntry	*ConnectionPool;
 static int *fds = NULL;				/* listening file descriptors (UNIX socket,
 								 * inet domain sockets) */
 
@@ -537,6 +539,9 @@ PgpoolMain(bool discard_status, bool clear_memcache_oidmaps)
 	 */
 	POOL_SETMASK(&BlockSig);
 
+	ipc_endpoints = malloc(sizeof(IPC_Endpoint) * pool_config->num_init_children);
+	memset(ipc_endpoints, 0, sizeof(IPC_Endpoint) * pool_config->num_init_children);
+
 	if (pool_config->process_management == PM_DYNAMIC)
 	{
 		if (pool_config->process_management_strategy == PM_STRATEGY_AGGRESSIVE)
@@ -645,6 +650,13 @@ PgpoolMain(bool discard_status, bool clear_memcache_oidmaps)
 	/* This is the main loop */
 	for (;;)
 	{
+		int		fd_max;
+		int		i;
+		int		select_ret;
+		struct timeval tv;
+		fd_set	rmask;
+
+
 		/* Check pending requests */
 		check_requests();
 #ifdef NOT_USED
@@ -661,7 +673,7 @@ PgpoolMain(bool discard_status, bool clear_memcache_oidmaps)
 			POOL_NODE_STATUS *node_status = pool_get_node_status();
 
 			ereport(LOG,
-					(errmsg("%s successfully started. version %s (%s)", PACKAGE, VERSION, PGPOOLVERSION)));
+					(errmsg("%s successfully started. Modified version %s (%s)", PACKAGE, VERSION, PGPOOLVERSION)));
 
 			/*
 			 * Very early stage node checking. It is assumed that
@@ -690,6 +702,56 @@ PgpoolMain(bool discard_status, bool clear_memcache_oidmaps)
 		first = false;
 
 		processState = SLEEPING;
+/* -------------- TESTING CODE ------------------- */
+		FD_ZERO(&rmask);
+		fd_max = 0;
+		for (i = 0; i < pool_config->num_init_children; i++)
+		{
+			if (ipc_endpoints[i].child_link > 0 && ipc_endpoints[i].child_pid > 0)
+			{
+				FD_SET(ipc_endpoints[i].child_link, &rmask);
+				if (fd_max < ipc_endpoints[i].child_link)
+					fd_max = ipc_endpoints[i].child_link;
+			}
+		}
+
+		tv.tv_sec = 2;
+		tv.tv_usec = 0;
+
+		select_ret = select(fd_max + 1, &rmask, NULL, NULL, &tv);
+		if (select_ret > 0)
+		{
+			int reads = 0;
+			for (i = 0; i < pool_config->num_init_children; i++)
+			{
+				if (ipc_endpoints[i].child_link > 0 && ipc_endpoints[i].child_pid > 0)
+				{
+					if (FD_ISSET(ipc_endpoints[i].child_link, &rmask))
+					{
+						char type;
+						int len;
+						char buf[512];
+						socket_read(ipc_endpoints[i].child_link, &type, 1, 1);
+						socket_read(ipc_endpoints[i].child_link, &len, 4, 1);
+						len = ntohl(len);
+						socket_read(ipc_endpoints[i].child_link, buf, len, 1);
+						ereport(NOTICE,
+								(errmsg("read from child: %c %d \"%s\"", type, len, buf)));
+						reads++;
+					}
+				if (reads >= select_ret)
+					break;
+				}
+			}
+		}
+		else
+			ereport(LOG,
+					(errmsg("select() timeout. reason: %s", strerror(errno))));
+/* ------------ TESTING CODE ------------ */
+		if (pool_config->process_management == PM_DYNAMIC)
+			service_child_processes();
+		continue;
+
 		for (;;)
 		{
 			int			r;
@@ -832,12 +894,20 @@ static pid_t
 fork_a_child(int *fds, int id)
 {
 	pid_t		pid;
+	int ipc_sock[2];
 
+	if (socketpair(AF_UNIX, SOCK_STREAM, 0, ipc_sock) == -1) {
+		ereport(FATAL,
+			(errmsg("failed to IPC socket"),
+				 errdetail("system call socketpair() failed with reason: %m")));
+
+    }
 	pid = fork();
 
 	if (pid == 0)
 	{
 		on_exit_reset();
+		close(ipc_sock[1]);
 
 		/*
 		 * Before we unconditionally closed pipe_fds[0] and pipe_fds[1] here,
@@ -860,7 +930,7 @@ fork_a_child(int *fds, int id)
 		health_check_timer_expired = 0;
 		reload_config_request = 0;
 		my_proc_id = id;
-		do_child(fds);
+		do_child(fds, ipc_sock[0]);
 	}
 	else if (pid == -1)
 	{
@@ -868,7 +938,13 @@ fork_a_child(int *fds, int id)
 				(errmsg("failed to fork a child"),
 				 errdetail("system call fork() failed with reason: %m")));
 	}
-
+	else
+	{
+		close(ipc_sock[0]);
+		socket_set_nonblock(ipc_sock[1]);
+		ipc_endpoints[id].child_link = ipc_sock[1];
+		ipc_endpoints[id].child_pid = pid;
+	}
 	return pid;
 }
 
@@ -1997,7 +2073,11 @@ reaper(void)
 				if (pid == process_info[i].pid)
 				{
 					found = true;
-					/* if found, fork a new child */
+					/* Close the ipc endpoint for the exited child */
+					close(ipc_endpoints[i].child_link);
+					ipc_endpoints[i].child_link = -1;
+					ipc_endpoints[i].child_pid = 0;
+					/* fork a new child */
 					if (!switching && !exiting && restart_child &&
 						pool_config->process_management != PM_DYNAMIC)
 					{
@@ -3021,6 +3101,8 @@ initialize_shared_mem_objects(bool clear_memcache_oidmaps)
 	size += MAXALIGN(pool_config->num_init_children * sizeof(pid_t));
 	size += MAXALIGN(pool_config->num_init_children * sizeof(pid_t));
 
+	size += MAXALIGN(sizeof(ConnectionPoolEntry) * pool_config->max_pool);
+
 	if (pool_is_shmem_cache())
 	{
 		size += MAXALIGN(pool_shared_memory_cache_size());
@@ -3051,6 +3133,9 @@ initialize_shared_mem_objects(bool clear_memcache_oidmaps)
 
 	/* get the shared memory from main segment*/
 	con_info = (ConnectionInfo *)pool_shared_memory_segment_get_chunk(pool_coninfo_size());
+
+	ConnectionPool = (ConnectionPoolEntry *)pool_shared_memory_segment_get_chunk(sizeof(ConnectionPoolEntry) * pool_config->max_pool);
+	memset(ConnectionPool, 0, sizeof(ConnectionPoolEntry) * pool_config->max_pool);
 
 	process_info = (ProcessInfo *)pool_shared_memory_segment_get_chunk(pool_config->num_init_children * (sizeof(ProcessInfo)));
 	for (i = 0; i < pool_config->num_init_children; i++)
@@ -3813,7 +3898,12 @@ sync_backend_from_watchdog(void)
 			{
 				if (process_info[i].pid)
 				{
+					/* Close the ipc endpoint for the exiting child */
+					close(ipc_endpoints[i].child_link);
+
 					kill(process_info[i].pid, SIGQUIT);
+					ipc_endpoints[i].child_link = -1;
+					ipc_endpoints[i].child_pid = 0;
 
 					process_info[i].pid = fork_a_child(fds, i);
 					process_info[i].start_time = time(NULL);
@@ -4679,7 +4769,12 @@ exec_child_restart(FAILOVER_CONTEXT *failover_context, int node_id)
 			{
 				if (process_info[i].pid)
 				{
+					/* Close the ipc endpoint for the exiting child */
+					close(ipc_endpoints[i].child_link);
+
 					kill(process_info[i].pid, SIGQUIT);
+					ipc_endpoints[i].child_link = -1;
+					ipc_endpoints[i].child_pid = 0;
 
 					process_info[i].pid = fork_a_child(fds, i);
 					process_info[i].start_time = time(NULL);

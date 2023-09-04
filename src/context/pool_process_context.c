@@ -125,20 +125,6 @@ pool_coninfo_size(void)
 	return size;
 }
 
-/*
- * Return number of elements of connection info(ConnectionInfo) on shmem.
- */
-int
-pool_coninfo_num(void)
-{
-	int			nelm;
-
-	nelm = pool_config->num_init_children *
-		pool_config->max_pool *
-		MAX_NUM_BACKENDS;
-
-	return nelm;
-}
 
 /*
  * Return pointer to i th child, j th connection pool and k th backend
@@ -167,42 +153,6 @@ pool_coninfo(int child, int connection_pool, int backend)
 				(errmsg("failed to get connection info, invalid backend number: %d", backend)));
 		return NULL;
 	}
-
-	return &con_info[child * pool_config->max_pool * MAX_NUM_BACKENDS +
-					 connection_pool * MAX_NUM_BACKENDS +
-					 backend];
-}
-
-/*
- * Return pointer to child which has OS process id pid, j th connection
- * pool and k th backend of connection info on shmem.
- */
-ConnectionInfo *
-pool_coninfo_pid(int pid, int connection_pool, int backend)
-{
-	int			child = -1;
-	int			i;
-
-	for (i = 0; i < pool_config->num_init_children; i++)
-	{
-		if (process_info[i].pid == pid)
-		{
-			child = i;
-			break;
-		}
-	}
-
-	if (child < 0)
-		elog(ERROR, "failed to get child pid, invalid child PID:%d", pid);
-
-	if (child < 0 || child >= pool_config->num_init_children)
-		elog(ERROR, "failed to get child pid, invalid child no:%d", child);
-
-	if (connection_pool < 0 || connection_pool >= pool_config->max_pool)
-		elog(ERROR, "failed to get child pid, invalid connection pool no:%d", connection_pool);
-
-	if (backend < 0 || backend >= MAX_NUM_BACKENDS)
-		elog(ERROR, "failed to get child pid, invalid backend no:%d", backend);
 
 	return &con_info[child * pool_config->max_pool * MAX_NUM_BACKENDS +
 					 connection_pool * MAX_NUM_BACKENDS +
