@@ -136,6 +136,7 @@ POOL_CONNECTION *volatile child_frontend = NULL;
 
 struct timeval startTime;
 
+int	parent_link_fd = -1;
 #ifdef DEBUG
 bool		stop_now = false;
 #endif
@@ -144,7 +145,7 @@ bool		stop_now = false;
 * child main loop
 */
 void
-do_child(int *fds)
+do_child(int *fds, int ipc_fd)
 {
 	sigjmp_buf	local_sigjmp_buf;
 	POOL_CONNECTION_POOL *volatile backend = NULL;
@@ -177,6 +178,8 @@ do_child(int *fds)
 	signal(SIGPIPE, SIG_IGN);
 
 	on_system_exit(child_will_go_down, (Datum) NULL);
+
+	parent_link_fd = ipc_fd;
 
 	int		   *walk;
 #ifdef NONE_BLOCK
@@ -387,7 +390,6 @@ do_child(int *fds)
 		check_config_reload();
 		validate_backend_connectivity(front_end_fd);
 		child_frontend = get_connection(front_end_fd, &saddr);
-
 		/* set frontend fd to blocking */
 		socket_unset_nonblock(child_frontend->fd);
 

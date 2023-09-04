@@ -184,6 +184,19 @@ typedef struct
 	bool		exit_if_idle;
 	int		pooled_connections; /* Total number of pooled connections
 									  * by this child */
+	/* Following fields are used to request connection from main process */
+	char		database[SM_DATABASE];	/* Database name */
+	char		user[SM_USER];	/* User name */
+	int			major;			/* protocol major version */
+	int			minor;			/* protocol minor version */
+	/* Following are used by main process to return the info to child
+	 * We do not lock these fields and make sure the client only read
+	 * this after receiving the indication from main process
+	 */
+	int         pool_id;
+	int			num_sockets;
+    int         backend_ids[MAX_NUM_BACKENDS];
+
 }			ProcessInfo;
 
 /*
