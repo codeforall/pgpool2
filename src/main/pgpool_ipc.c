@@ -30,6 +30,7 @@
 #include "main/pgpool_ipc.h"
 #include "pool_config_variables.h"
 #include "context/pool_process_context.h"
+#include "protocol/pool_connection_pool.h"
 #include "utils/socket_stream.h"
 #include "utils/elog.h"
 #include "utils/palloc.h"
@@ -57,6 +58,7 @@
 #define MAX_WAIT_FOR_PARENT_RESPONSE 5 /* TODO should it be configurable ?*/
 
 static bool receive_sockets(int fd, int count, int *sockets);
+static bool process_borrow__connection_request(IPC_Endpoint* ipc_endpoint);
 /*
  * To keep the packet small we use ProcessInfo for communicating the
  * required connection credentials */
@@ -64,8 +66,10 @@ POOL_IPC_RETURN_CODES
 BorrowBackendConnection(int	parent_link, char* database, char* user, int major, int minor, int *count, int* sockets)
 {
     char type = IPC_BORROW_CONNECTION_REQUEST;
+
 	if (processType != PT_CHILD)
-		return INVALID_OPERATION;   
+		return INVALID_OPERATION;
+
     /* write the information in procInfo*/
     ProcessInfo *pro_info = pool_get_my_process_info();
     StrNCpy(pro_info->database, database, SM_DATABASE);
@@ -101,8 +105,15 @@ BorrowBackendConnection(int	parent_link, char* database, char* user, int major, 
 
     if (type == IPC_SOCKET_TRANSFER_MESSAGE)
     {
+        BackendEndPoint* backend_end_point = GetBackendEndPoint(pro_info->pool_id);
+        if (backend_end_point == NULL)
+        {
+            ereport(WARNING,
+                    (errmsg("failed to get backend end point for pool_id:%d", pro_info->pool_id)));
+            return OPERATION_FAILED;
+        }
         /* ProcessInfo should already have the socket count */
-        *count = pro_info->num_sockets;
+        *count = backend_end_point->num_sockets;
         if(receive_sockets(parent_link, *count, sockets))
             return SOCKETS_RECEIVED;
         return OPERATION_FAILED;
@@ -116,6 +127,53 @@ BorrowBackendConnection(int	parent_link, char* database, char* user, int major, 
     return INVALID_RESPONSE;
 }
 
+bool
+ProcessChildRequestOnMain(IPC_Endpoint* ipc_endpoint)
+{
+    char type;
+	if (processType != PT_MAIN)
+		return false;
+
+    if (socket_read(ipc_endpoint->child_link, &type, 1, MAX_WAIT_FOR_PARENT_RESPONSE) != 1)
+    {
+        ereport(LOG,
+                (errmsg("failed to read IPC packet type:%c from child:%d", type, ipc_endpoint->child_pid)));
+        return false;
+    }
+    if (type == IPC_BORROW_CONNECTION_REQUEST)
+        return process_borrow__connection_request(ipc_endpoint);
+
+    ereport(LOG,
+            (errmsg("failed to process unsupported IPC packet type:%c from child:%d", type, ipc_endpoint->child_pid)));
+
+    return false;
+}
+
+static bool
+process_borrow__connection_request(IPC_Endpoint* ipc_endpoint)
+{
+    return LeasePooledConnectionToChild(ipc_endpoint);
+}
+
+bool
+TransferSocketsBetweenProcesses(int process_link, int count, int *sockets)
+{
+    char type = IPC_SOCKET_TRANSFER_MESSAGE;
+    if (write(process_link, &type, 1) != 1)
+    {
+        ereport(WARNING,
+                (errmsg("failed to write IPC packet type:%c to parent", type)));
+        return false;
+    }
+    if (ancil_send_fds(process_link, sockets, count) == -1)
+    {
+        ereport(WARNING,
+                (errmsg("ancil_send_fds failed")));
+        return false;
+    }
+    return true;
+}
+
 static bool
 receive_sockets(int fd, int count, int *sockets)
 {
@@ -127,3 +185,4 @@ receive_sockets(int fd, int count, int *sockets)
     }
     return true;
 }
+

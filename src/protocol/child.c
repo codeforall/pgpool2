@@ -57,6 +57,7 @@
 #include "utils/elog.h"
 #include "utils/ps_status.h"
 #include "utils/timestamp.h"
+#include "main/pgpool_ipc.h"
 
 #include "context/pool_process_context.h"
 #include "context/pool_session_context.h"
@@ -222,10 +223,7 @@ do_child(int *fds, int ipc_fd)
 #endif
 
 	/* initialize connection pool */
-	if (pool_init_cp())
-	{
-		child_exit(POOL_EXIT_AND_RESTART);
-	}
+	pool_init_cp(parent_link_fd);
 
 	/*
 	 * Open pool_passwd in child process.  This is necessary to avoid the file
@@ -1042,16 +1040,15 @@ StartupPacketCopy(StartupPacket *sp)
  * Create a new connection to backend.
  * Authentication is performed if requested by backend.
  */
-static POOL_CONNECTION_POOL * connect_backend(StartupPacket *sp, POOL_CONNECTION * frontend)
+static POOL_CONNECTION_POOL *
+connect_backend(StartupPacket *sp, POOL_CONNECTION * frontend)
 {
-	POOL_CONNECTION_POOL *backend;
-	StartupPacket *volatile topmem_sp = NULL;
 	volatile bool	topmem_sp_set = false;
+	POOL_CONNECTION_POOL *backend;
 	int			i;
 
 	/* connect to the backend */
-	backend = pool_create_cp();
-	if (backend == NULL)
+	if (ConnectBackendSocktes() == false)
 	{
 		pool_send_error_message(frontend, sp->major, "XX000", "all backend nodes are down, pgpool requires at least one valid node", "",
 								"repair the backend nodes and restart pgpool", __FILE__, __LINE__);
@@ -1065,8 +1062,8 @@ static POOL_CONNECTION_POOL * connect_backend(StartupPacket *sp, POOL_CONNECTION
 	{
 		MemoryContext frontend_auth_cxt;
 		MemoryContext oldContext = MemoryContextSwitchTo(TopMemoryContext);
-
-		topmem_sp = StartupPacketCopy(sp);
+		/* Save the startup packet */
+		GetChildBackendConnection()->sp = StartupPacketCopy(sp);
 		MemoryContextSwitchTo(oldContext);
 
 		for (i = 0; i < NUM_BACKENDS; i++)
@@ -1082,10 +1079,6 @@ static POOL_CONNECTION_POOL * connect_backend(StartupPacket *sp, POOL_CONNECTION
 
 				pool_ssl_negotiate_clientserver(CONNECTION(backend, i));
 
-				/*
-				 * save startup packet info
-				 */
-				CONNECTION_SLOT(backend, i)->sp = topmem_sp;
 				topmem_sp_set = true;
 
 				/* send startup packet */
@@ -1111,7 +1104,8 @@ static POOL_CONNECTION_POOL * connect_backend(StartupPacket *sp, POOL_CONNECTION
 	PG_CATCH();
 	{
 		pool_discard_cp(sp->user, sp->database, sp->major);
-		topmem_sp = NULL;
+		GetChildBackendConnection()->sp = NULL;
+		// topmem_sp = NULL;
 		PG_RE_THROW();
 	}
 	PG_END_TRY();
@@ -1119,10 +1113,12 @@ static POOL_CONNECTION_POOL * connect_backend(StartupPacket *sp, POOL_CONNECTION
 	/* At this point, we need to free previously allocated memory for the
 	 * startup packet if no backend is up.
 	 */
-	if (!topmem_sp_set && topmem_sp != NULL)
-		pfree(topmem_sp);
-
-	return backend;
+	if (!topmem_sp_set)
+	{
+		pfree(GetChildBackendConnection()->sp);
+		GetChildBackendConnection()->sp = NULL;
+	}
+	return NULL;
 }
 
 /*
@@ -1972,7 +1968,7 @@ get_backend_connection(POOL_CONNECTION * frontend)
 {
 	int			found = 0;
 	StartupPacket *sp;
-	POOL_CONNECTION_POOL *backend;
+	POOL_CONNECTION_POOL *backend = NULL;
 
 	/* read the startup packet */
 retry_startup:
@@ -2064,10 +2060,26 @@ retry_startup:
 	 * connect to the backend and send the startup packet.
 	 */
 
+	/* Ask for a connection from main process*/
+	int		sockets[MAX_NUM_BACKENDS];
+	int		count;
+	POOL_IPC_RETURN_CODES	ipc_ret;
+    ProcessInfo *pro_info = pool_get_my_process_info();
+	ipc_ret = BorrowBackendConnection(parent_link_fd, frontend->database,
+						frontend->username, frontend->protoVersion, 0, &count, sockets);
+
+	if (ipc_ret == SOCKETS_RECEIVED)
+	{
+		/* TODO Handle broken sockets and startup packet comparison */
+		ereport(LOG,
+				(errmsg("received %d sockets from parent pool_id:%d", count, pro_info->pool_id),
+				 errdetail("database:%s user:%s protoMajor:%d", frontend->database, frontend->username, frontend->protoVersion)));
+		ImportPoolConnectionIntoChild(pro_info->pool_id, sockets);
+	}
 	/* look for an existing connection */
 	found = 0;
 
-	backend = pool_get_cp(sp->user, sp->database, sp->major, 1);
+	// backend = pool_get_cp(sp->user, sp->database, sp->major, 1);
 
 	if (backend != NULL)
 	{

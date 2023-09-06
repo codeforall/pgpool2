@@ -46,6 +46,7 @@
 #include "main/health_check.h"
 #include "main/pool_internal_comms.h"
 #include "main/pgpool_logger.h"
+#include "main/pgpool_ipc.h"
 #include "utils/elog.h"
 #include "utils/palloc.h"
 #include "utils/memutils.h"
@@ -55,6 +56,7 @@
 #include "context/pool_process_context.h"
 #include "protocol/pool_process_query.h"
 #include "protocol/pool_pg_utils.h"
+#include "protocol/pool_connection_pool.h"
 #include "auth/pool_passwd.h"
 #include "auth/pool_hba.h"
 #include "query_cache/pool_memqcache.h"
@@ -230,7 +232,6 @@ BACKEND_STATUS private_backend_status[MAX_NUM_BACKENDS];
  * con_info[pool_config->num_init_children][pool_config->max_pool][MAX_NUM_BACKENDS]
  */
 ConnectionInfo *con_info;
-ConnectionPoolEntry	*ConnectionPool;
 static int *fds = NULL;				/* listening file descriptors (UNIX socket,
 								 * inet domain sockets) */
 
@@ -728,15 +729,7 @@ PgpoolMain(bool discard_status, bool clear_memcache_oidmaps)
 				{
 					if (FD_ISSET(ipc_endpoints[i].child_link, &rmask))
 					{
-						char type;
-						int len;
-						char buf[512];
-						socket_read(ipc_endpoints[i].child_link, &type, 1, 1);
-						socket_read(ipc_endpoints[i].child_link, &len, 4, 1);
-						len = ntohl(len);
-						socket_read(ipc_endpoints[i].child_link, buf, len, 1);
-						ereport(NOTICE,
-								(errmsg("read from child: %c %d \"%s\"", type, len, buf)));
+						ProcessChildRequestOnMain(&ipc_endpoints[i]);
 						reads++;
 					}
 				if (reads >= select_ret)
@@ -945,6 +938,7 @@ fork_a_child(int *fds, int id)
 		socket_set_nonblock(ipc_sock[1]);
 		ipc_endpoints[id].child_link = ipc_sock[1];
 		ipc_endpoints[id].child_pid = pid;
+		ipc_endpoints[id].proc_info_id = id;
 	}
 	return pid;
 }
@@ -2078,6 +2072,7 @@ reaper(void)
 					close(ipc_endpoints[i].child_link);
 					ipc_endpoints[i].child_link = -1;
 					ipc_endpoints[i].child_pid = 0;
+					ipc_endpoints[i].proc_info_id = -1;
 					/* fork a new child */
 					if (!switching && !exiting && restart_child &&
 						pool_config->process_management != PM_DYNAMIC)
@@ -3099,7 +3094,7 @@ initialize_shared_mem_objects(bool clear_memcache_oidmaps)
 	size += MAXALIGN(pool_config->num_init_children * sizeof(pid_t));
 	size += MAXALIGN(pool_config->num_init_children * sizeof(pid_t));
 
-	size += MAXALIGN(sizeof(ConnectionPoolEntry) * pool_config->max_pool);
+	size += MAXALIGN(get_global_connection_pool_shared_mem_size());
 
 	if (pool_is_shmem_cache())
 	{
@@ -3132,8 +3127,8 @@ initialize_shared_mem_objects(bool clear_memcache_oidmaps)
 	/* get the shared memory from main segment*/
 	con_info = (ConnectionInfo *)pool_shared_memory_segment_get_chunk(pool_coninfo_size());
 
-	ConnectionPool = (ConnectionPoolEntry *)pool_shared_memory_segment_get_chunk(sizeof(ConnectionPoolEntry) * pool_config->max_pool);
-	memset(ConnectionPool, 0, sizeof(ConnectionPoolEntry) * pool_config->max_pool);
+	ConnectionPool = (ConnectionPoolEntry *)pool_shared_memory_segment_get_chunk(get_global_connection_pool_shared_mem_size());
+	init_global_connection_pool();
 
 	process_info = (ProcessInfo *)pool_shared_memory_segment_get_chunk(pool_config->num_init_children * (sizeof(ProcessInfo)));
 	for (i = 0; i < pool_config->num_init_children; i++)
@@ -3901,6 +3896,8 @@ sync_backend_from_watchdog(void)
 					kill(process_info[i].pid, SIGQUIT);
 					ipc_endpoints[i].child_link = -1;
 					ipc_endpoints[i].child_pid = 0;
+					ipc_endpoints[i].proc_info_id = -1;
+
 
 					process_info[i].pid = fork_a_child(fds, i);
 					process_info[i].start_time = time(NULL);
@@ -4772,6 +4769,7 @@ exec_child_restart(FAILOVER_CONTEXT *failover_context, int node_id)
 					kill(process_info[i].pid, SIGQUIT);
 					ipc_endpoints[i].child_link = -1;
 					ipc_endpoints[i].child_pid = 0;
+					ipc_endpoints[i].proc_info_id = -1;
 
 					process_info[i].pid = fork_a_child(fds, i);
 					process_info[i].start_time = time(NULL);
