@@ -197,8 +197,6 @@ typedef struct
 	 * this after receiving the indication from main process
 	 */
 	int         pool_id;
-	int			num_sockets;
-    int         backend_ids[MAX_NUM_BACKENDS];
 
 }			ProcessInfo;
 

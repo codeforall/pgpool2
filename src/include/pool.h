@@ -86,9 +86,9 @@
 
 typedef struct
 {
-	int child_link;
+	int 	child_link;
 	pid_t	child_pid;
-	/* data */
+	int		proc_info_id;
 } IPC_Endpoint;
 
 typedef enum
@@ -276,47 +276,6 @@ typedef struct
 	POOL_CONNECTION_POOL_SLOT *slots[MAX_NUM_BACKENDS];
 }			POOL_CONNECTION_POOL;
 
-typedef enum
-{
-	POOL_ENTRY_EMPTY = 0,
-	POOL_ENTRY_LENDED,
-	POOL_ENTRY_READY,
-	POOL_ENTRY_RESERVED
-}			POOL_ENTRY_STATUS;
-
-typedef struct BackendConnection
-{
-	ConnectionInfo conn_info;
-	int 			socket;
-}BackendConnection;
-
-typedef struct
-{
-	char		database[SM_DATABASE];	/* Database name */
-	char		user[SM_USER];	/* User name */
-	int			major;			/* protocol major version */
-	int			minor;			/* protocol minor version */
-
-	union
-	{
-		char startup_packet[MAX_STARTUP_PACKET_LENGTH];			/* startup packet info */
-		StartupPacket *sp;			/* startup packet info */
-	}StartupPacketData;	
-	int			key;			/* cancel key */
-
-	BackendConnection conn_Slots[MAX_NUM_BACKENDS];
-}			BackendEndPoint;
-
-typedef struct
-{
-	BackendEndPoint 	endPoint;
-	POOL_ENTRY_STATUS	status;
-
-	pid_t	borrower_pid;
-	time_t 	leased_time;
-	int		used_count;
-	/* data */
-}	ConnectionPoolEntry;
 
 /* Defined in pool_session_context.h */
 extern int	pool_get_major_version(void);
@@ -383,7 +342,7 @@ extern int	my_main_node_id;
 #define IS_MAIN_NODE_ID(node_id) (MAIN_NODE_ID == (node_id))
 #define MAIN_CONNECTION(p) ((p)->slots[MAIN_NODE_ID])
 #define MAIN(p) MAIN_CONNECTION(p)->con
-
+ 
 /*
  * Backend node status in streaming replication mode.
  */
@@ -410,7 +369,7 @@ typedef enum
 #define MAJOR(p) (pool_get_major_version())
 #define TSTATE(p, i) (CONNECTION(p, i)->tstate)
 #define INTERNAL_TRANSACTION_STARTED(p, i) (CONNECTION(p, i)->is_internal_transaction_started)
-
+ 
 #define Max(x, y)		((x) > (y) ? (x) : (y))
 #define Min(x, y)		((x) < (y) ? (x) : (y))
 
