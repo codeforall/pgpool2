@@ -145,14 +145,14 @@ pool_search_relcache(POOL_RELCACHE * relcache, POOL_CONNECTION_POOL * backend, c
 	 */
 	if (pool_config->relcache_query_target == RELQTARGET_LOAD_BALANCE_NODE &&
 		session_context && VALID_BACKEND_RAW(session_context->load_balance_node_id) &&
-		backend->slots[session_context->load_balance_node_id])
+		&backend->slots[session_context->load_balance_node_id])
 	{
-		dbname = backend->slots[session_context->load_balance_node_id]->sp->database;
+		dbname = backend->sp->database;
 		node_id = session_context->load_balance_node_id;
 	}
 	else
 	{
-		dbname = MAIN_CONNECTION(backend)->sp->database;
+		dbname = backend->sp->database;
 
 		/*
 		 * If in streaming replication mode, prefer to send query to the

@@ -173,8 +173,8 @@ pool_rewrite_lo_creat(char kind, char *packet, int packet_len,
 	/* issue lock table command to lob_lock_table */
 	snprintf(qbuf, sizeof(qbuf), "LOCK TABLE %s IN SHARE ROW EXCLUSIVE MODE", pool_config->lobj_lock_table);
 	per_node_statement_log(backend, MAIN_NODE_ID, qbuf);
-	status = do_command(frontend, MAIN(backend), qbuf, MAJOR(backend), MAIN_CONNECTION(backend)->pid,
-						MAIN_CONNECTION(backend)->key, 0);
+	status = do_command(frontend, MAIN(backend), qbuf, MAJOR(backend), MAIN_CONNECTION(backend).pid,
+						MAIN_CONNECTION(backend).key, 0);
 	if (status == POOL_END)
 	{
 		ereport(WARNING,

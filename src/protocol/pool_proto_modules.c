@@ -2361,15 +2361,15 @@ static POOL_STATUS close_standby_transactions(POOL_CONNECTION * frontend,
 
 	for (i = 0; i < NUM_BACKENDS; i++)
 	{
-		if (CONNECTION_SLOT(backend, i) &&
+		if (&CONNECTION_SLOT(backend, i) &&
 			TSTATE(backend, i) == 'T' &&
 			BACKEND_INFO(i).backend_status == CON_UP &&
 			(MAIN_REPLICA ? PRIMARY_NODE_ID : REAL_MAIN_NODE_ID) != i)
 		{
 			per_node_statement_log(backend, i, "COMMIT");
 			if (do_command(frontend, CONNECTION(backend, i), "COMMIT", MAJOR(backend),
-						   MAIN_CONNECTION(backend)->pid,
-						   MAIN_CONNECTION(backend)->key, 0) != POOL_CONTINUE)
+						   MAIN_CONNECTION(backend).pid,
+						   MAIN_CONNECTION(backend).key, 0) != POOL_CONTINUE)
 				ereport(ERROR,
 						(errmsg("unable to close standby transactions"),
 						 errdetail("do_command returned DEADLOCK status")));
@@ -3656,11 +3656,11 @@ generate_error_message(char *prefix, int specific_error, char *query)
 void
 per_node_statement_log(POOL_CONNECTION_POOL * backend, int node_id, char *query)
 {
-	POOL_CONNECTION_POOL_SLOT *slot = backend->slots[node_id];
+	// POOL_CONNECTION_POOL_SLOT *slot = backend->slots[node_id];
 
 	if (pool_config->log_per_node_statement)
 		ereport(LOG,
-				(errmsg("DB node id: %d backend pid: %d statement: %s", node_id, ntohl(slot->pid), query)));
+				(errmsg("DB node id: %d backend pid: %d statement: %s", node_id, ntohl(backend->slots[node_id].pid), query)));
 }
 
 /*
@@ -3682,7 +3682,7 @@ per_node_statement_notice(POOL_CONNECTION_POOL * backend, int node_id, char *que
 char
 per_node_error_log(POOL_CONNECTION_POOL * backend, int node_id, char *query, char *prefix, bool unread)
 {
-	POOL_CONNECTION_POOL_SLOT *slot = backend->slots[node_id];
+	// POOL_CONNECTION_POOL_SLOT *slot = backend->slots[node_id];
 	char	   *message;
 	char	   kind;
 
@@ -3698,7 +3698,7 @@ per_node_error_log(POOL_CONNECTION_POOL * backend, int node_id, char *query, cha
 	{
 		ereport(LOG,
 				(errmsg("%s: DB node id: %d backend pid: %d statement: \"%s\" message: \"%s\"",
-						prefix, node_id, ntohl(slot->pid), query, message)));
+						prefix, node_id, ntohl(backend->slots[node_id].pid), query, message)));
 		pfree(message);
 	}
 	return kind;

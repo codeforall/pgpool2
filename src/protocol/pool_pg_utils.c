@@ -40,7 +40,7 @@
 #include "pool_config_variables.h"
 
 static int	choose_db_node_id(char *str);
-static void free_persistent_db_connection_memory(POOL_CONNECTION_POOL_SLOT * cp);
+static void free_startup_packet(StartupPacket* sp);
 static void si_enter_critical_region(void);
 static void si_leave_critical_region(void);
 
@@ -66,6 +66,7 @@ make_persistent_db_connection(
 	static StartupPacket_v3 * startup_packet;
 	int			len,
 				len1;
+	StartupPacket *sp;
 
 	cp = palloc0(sizeof(POOL_CONNECTION_POOL_SLOT));
 	startup_packet = palloc0(sizeof(*startup_packet));
@@ -86,8 +87,8 @@ make_persistent_db_connection(
 
 	if (fd < 0)
 	{
-		free_persistent_db_connection_memory(cp);
 		pfree(startup_packet);
+		pfree(cp);
 		ereport(ERROR,
 				(errmsg("failed to make persistent db connection"),
 				 errdetail("connection to host:\"%s:%d\" failed", hostname, port)));
@@ -107,8 +108,8 @@ make_persistent_db_connection(
 	len1 = snprintf(&startup_packet->data[len], sizeof(startup_packet->data) - len, "%s", user) + 1;
 	if (len1 >= (sizeof(startup_packet->data) - len))
 	{
-		pool_close(cp->con);
-		free_persistent_db_connection_memory(cp);
+		pool_close(cp->con, true);
+		pfree(cp);
 		pfree(startup_packet);
 		ereport(ERROR,
 				(errmsg("failed to make persistent db connection"),
@@ -119,8 +120,8 @@ make_persistent_db_connection(
 	len1 = snprintf(&startup_packet->data[len], sizeof(startup_packet->data) - len, "database") + 1;
 	if (len1 >= (sizeof(startup_packet->data) - len))
 	{
-		pool_close(cp->con);
-		free_persistent_db_connection_memory(cp);
+		pool_close(cp->con,true);
+		pfree(cp);
 		pfree(startup_packet);
 		ereport(ERROR,
 				(errmsg("failed to make persistent db connection"),
@@ -131,8 +132,8 @@ make_persistent_db_connection(
 	len1 = snprintf(&startup_packet->data[len], sizeof(startup_packet->data) - len, "%s", dbname) + 1;
 	if (len1 >= (sizeof(startup_packet->data) - len))
 	{
-		pool_close(cp->con);
-		free_persistent_db_connection_memory(cp);
+		pool_close(cp->con, true);
+		pfree(cp);
 		pfree(startup_packet);
 		ereport(ERROR,
 				(errmsg("failed to make persistent db connection"),
@@ -141,31 +142,33 @@ make_persistent_db_connection(
 	len += len1;
 	startup_packet->data[len++] = '\0';
 
-	cp->sp = palloc(sizeof(StartupPacket));
+	sp = palloc(sizeof(StartupPacket));
 
-	cp->sp->startup_packet = (char *) startup_packet;
-	cp->sp->len = len + 4;
-	cp->sp->major = 3;
-	cp->sp->minor = 0;
-	cp->sp->database = pstrdup(dbname);
-	cp->sp->user = pstrdup(user);
+	sp->startup_packet = (char *) startup_packet;
+	sp->len = len + 4;
+	sp->major = 3;
+	sp->minor = 0;
+	sp->database = pstrdup(dbname);
+	sp->user = pstrdup(user);
 
 	/*
 	 * send startup packet
 	 */
 	PG_TRY();
 	{
-		send_startup_packet(cp);
-		connection_do_auth(cp, password);
+		send_startup_packet(cp, sp);
+		connection_do_auth(cp, password, sp);
 	}
 	PG_CATCH();
 	{
-		pool_close(cp->con);
-		free_persistent_db_connection_memory(cp);
+		pool_close(cp->con,true);
+		pfree(cp);
+		free_startup_packet(sp);
 		PG_RE_THROW();
 	}
 	PG_END_TRY();
 
+	free_startup_packet(sp);
 	return cp;
 }
 
@@ -214,27 +217,18 @@ make_persistent_db_connection_noerror(
 }
 
 /*
- * Free memory of POOL_CONNECTION_POOL_SLOT.  Should only be used in
- * make_persistent_db_connection and discard_persistent_db_connection.
+ * Free memory of StartupPacket.
  */
 static void
-free_persistent_db_connection_memory(POOL_CONNECTION_POOL_SLOT * cp)
+free_startup_packet(StartupPacket* sp)
 {
-	if (!cp)
-		return;
-	if (!cp->sp)
-	{
-		pfree(cp);
-		return;
-	}
-	if (cp->sp->startup_packet)
-		pfree(cp->sp->startup_packet);
-	if (cp->sp->database)
-		pfree(cp->sp->database);
-	if (cp->sp->user)
-		pfree(cp->sp->user);
-	pfree(cp->sp);
-	pfree(cp);
+	if (sp->startup_packet)
+		pfree(sp->startup_packet);
+	if (sp->database)
+		pfree(sp->database);
+	if (sp->user)
+		pfree(sp->user);
+	pfree(sp);
 }
 
 /*
@@ -263,21 +257,21 @@ discard_persistent_db_connection(POOL_CONNECTION_POOL_SLOT * cp)
 	pool_flush_it(cp->con);
 	socket_unset_nonblock(cp->con->fd);
 
-	pool_close(cp->con);
-	free_persistent_db_connection_memory(cp);
+	pool_close(cp->con, true);
+	pfree(cp);
 }
 
 /*
  * send startup packet
  */
 void
-send_startup_packet(POOL_CONNECTION_POOL_SLOT * cp)
+send_startup_packet(POOL_CONNECTION_POOL_SLOT * cp, StartupPacket *sp)
 {
 	int			len;
 
-	len = htonl(cp->sp->len + sizeof(len));
+	len = htonl(sp->len + sizeof(len));
 	pool_write(cp->con, &len, sizeof(len));
-	pool_write_and_flush(cp->con, cp->sp->startup_packet, cp->sp->len);
+	pool_write_and_flush(cp->con, sp->startup_packet, sp->len);
 }
 
 void
@@ -335,7 +329,7 @@ select_load_balancing_node(void)
 	 */
 	if (SL_MODE && pool_config->redirect_usernames)
 	{
-		char	   *user = MAIN_CONNECTION(ses->backend)->sp->user;
+		char	   *user = ses->backend->sp->user;
 
 		/*
 		 * Check to see if the user matches any of
@@ -362,7 +356,7 @@ select_load_balancing_node(void)
 	 */
 	if (SL_MODE && pool_config->redirect_dbnames)
 	{
-		char	   *database = MAIN_CONNECTION(ses->backend)->sp->database;
+		char	   *database = ses->backend->sp->database;
 
 		/*
 		 * Check to see if the database matches any of
@@ -396,7 +390,7 @@ select_load_balancing_node(void)
 	 */
 	if (SL_MODE && pool_config->redirect_app_names)
 	{
-		char	   *app_name = MAIN_CONNECTION(ses->backend)->sp->application_name;
+		char	   *app_name = ses->backend->sp->application_name;
 
 		/*
 		 * Check only if application name is set. Old applications may not

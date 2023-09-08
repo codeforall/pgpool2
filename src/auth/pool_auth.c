@@ -91,7 +91,7 @@ static bool get_auth_password(POOL_CONNECTION * backend, POOL_CONNECTION * front
  * make_persistent_db_connection().
  */
 void
-connection_do_auth(POOL_CONNECTION_POOL_SLOT * cp, char *password)
+connection_do_auth(POOL_CONNECTION_POOL_SLOT * cp, char *password, StartupPacket *sp)
 {
 	char		kind;
 	int			length;
@@ -115,7 +115,7 @@ connection_do_auth(POOL_CONNECTION_POOL_SLOT * cp, char *password)
 
 		if (kind == 'E' || kind == 'N')
 		{
-			sts = pool_extract_error_message(false, cp->con, cp->sp->major, false, &msg);
+			sts = pool_extract_error_message(false, cp->con, sp->major, false, &msg);
 		}
 
 		if (sts == 1)			/* succeeded in extracting error/notice
@@ -153,7 +153,7 @@ connection_do_auth(POOL_CONNECTION_POOL_SLOT * cp, char *password)
 		kind = send_password_packet(cp->con, PROTO_MAJOR_V3, password);
 		if (kind != AUTH_REQ_OK)
 			ereport(ERROR,
-					(errmsg("password authentication failed for user:%s", cp->sp->user),
+					(errmsg("password authentication failed for user:%s", sp->user),
 					 errdetail("backend replied with invalid kind")));
 
 		cp->con->auth_kind = AUTH_REQ_OK;
@@ -169,14 +169,14 @@ connection_do_auth(POOL_CONNECTION_POOL_SLOT * cp, char *password)
 		crypt_password = crypt(password, salt);
 		if (crypt_password == NULL)
 			ereport(ERROR,
-					(errmsg("crypt authentication failed for user:%s", cp->sp->user),
+					(errmsg("crypt authentication failed for user:%s", sp->user),
 					 errdetail("failed to encrypt the password")));
 
 		/* Send password packet to backend and receive auth response */
 		kind = send_password_packet(cp->con, PROTO_MAJOR_V3, crypt_password);
 		if (kind != AUTH_REQ_OK)
 			ereport(ERROR,
-					(errmsg("crypt authentication failed for user:%s", cp->sp->user),
+					(errmsg("crypt authentication failed for user:%s", sp->user),
 					 errdetail("backend replied with invalid kind")));
 
 		cp->con->auth_kind = AUTH_REQ_OK;
@@ -201,7 +201,7 @@ connection_do_auth(POOL_CONNECTION_POOL_SLOT * cp, char *password)
 		if (!strncmp("md5", password, 3) && (strlen(password) - 3) == MD5_PASSWD_LEN)
 			memcpy(buf1, password + 3, MD5_PASSWD_LEN + 1);
 		else
-			pool_md5_encrypt(password, cp->sp->user, strlen(cp->sp->user), buf1);
+			pool_md5_encrypt(password, sp->user, strlen(sp->user), buf1);
 
 		pool_md5_encrypt(buf1, salt, 4, buf + 3);
 		memcpy(buf, "md5", 3);
@@ -211,21 +211,21 @@ connection_do_auth(POOL_CONNECTION_POOL_SLOT * cp, char *password)
 		pfree(buf);
 		if (kind != AUTH_REQ_OK)
 			ereport(ERROR,
-					(errmsg("md5 authentication failed for user:%s", cp->sp->user),
+					(errmsg("md5 authentication failed for user:%s", sp->user),
 					 errdetail("backend replied with invalid kind")));
 
 		cp->con->auth_kind = AUTH_REQ_OK;
 	}
 	else if (auth_kind == AUTH_REQ_SASL)
 	{
-		if (do_SCRAM(NULL, cp->con, PROTO_MAJOR_V3, length, cp->sp->user, password, PASSWORD_TYPE_PLAINTEXT) == false)
+		if (do_SCRAM(NULL, cp->con, PROTO_MAJOR_V3, length, sp->user, password, PASSWORD_TYPE_PLAINTEXT) == false)
 		{
 			ereport(ERROR,
 					(errmsg("failed to authenticate with backend"),
-					 errdetail("SCRAM authentication failed for user:%s", cp->sp->user)));
+					 errdetail("SCRAM authentication failed for user:%s", sp->user)));
 		}
 		ereport(DEBUG1,
-				(errmsg("SCRAM authentication successful for user:%s", cp->sp->user)));
+				(errmsg("SCRAM authentication successful for user:%s", sp->user)));
 		cp->con->auth_kind = AUTH_REQ_OK;
 	}
 	else
@@ -343,10 +343,8 @@ pool_do_auth(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * cp)
 	int			authkind;
 	int			i;
 	int			message_length = 0;
-	StartupPacket *sp;
 
-
-	protoMajor = MAIN_CONNECTION(cp)->sp->major;
+	protoMajor = cp->sp->major;
 
 	kind = pool_read_kind(cp);
 	if (kind < 0)
@@ -759,7 +757,6 @@ pool_do_auth(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * cp)
 	/*
 	 * OK, read pid and secret key
 	 */
-	sp = MAIN_CONNECTION(cp)->sp;
 	pid = -1;
 
 	for (i = 0; i < NUM_BACKENDS; i++)
@@ -773,11 +770,8 @@ pool_do_auth(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * cp)
 						(errmsg("authentication failed"),
 						 errdetail("failed to read pid in slot %d", i)));
 			}
-			ereport(DEBUG1,
-					(errmsg("authentication backend"),
-					 errdetail("cp->info[i]:%p pid:%u", &cp->info[i], ntohl(pid))));
 
-			CONNECTION_SLOT(cp, i)->pid = cp->info[i].pid = pid;
+			CONNECTION_SLOT(cp, i).pid = cp->backend_end_point->conn_slots[i].pid = pid;
 
 			/* read key */
 			if (pool_read(CONNECTION(cp, i), &key, sizeof(key)) < 0)
@@ -786,15 +780,9 @@ pool_do_auth(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * cp)
 						(errmsg("authentication failed"),
 						 errdetail("failed to read key in slot %d", i)));
 			}
-			CONNECTION_SLOT(cp, i)->key = cp->info[i].key = key;
+			CONNECTION_SLOT(cp, i).key = cp->backend_end_point->conn_slots[i].key = key;
 
-			cp->info[i].major = sp->major;
-			cp->info[i].minor = sp->minor;
-			strlcpy(cp->info[i].database, sp->database, sizeof(cp->info[i].database));
-			strlcpy(cp->info[i].user, sp->user, sizeof(cp->info[i].user));
-			cp->info[i].counter = 1;
-			CONNECTION(cp, i)->con_info = &cp->info[i];
-			cp->info[i].swallow_termination = 0;
+			cp->backend_end_point->conn_slots[i].swallow_termination = 0;
 		}
 	}
 
@@ -827,6 +815,7 @@ pool_do_reauth(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * cp)
 	 */
 	if (!frontend->frontend_authenticated)
 	{
+		
 		switch (MAIN(cp)->auth_kind)
 		{
 			case AUTH_REQ_OK:
@@ -868,7 +857,7 @@ pool_do_reauth(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * cp)
 
 	msglen = htonl(0);
 	pool_write_and_flush(frontend, &msglen, sizeof(msglen));
-	pool_send_backend_key_data(frontend, MAIN_CONNECTION(cp)->pid, MAIN_CONNECTION(cp)->key, protoMajor);
+	pool_send_backend_key_data(frontend, MAIN_CONNECTION(cp).pid, MAIN_CONNECTION(cp).key, protoMajor);
 	return 0;
 }
 
@@ -886,11 +875,11 @@ pool_send_auth_fail(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * cp)
 
 	protoMajor = MAJOR(cp);
 
-	messagelen = strlen(MAIN_CONNECTION(cp)->sp->user) + 100;
+	messagelen = strlen(cp->sp->user) + 100;
 	errmessage = (char *) palloc(messagelen + 1);
 
 	snprintf(errmessage, messagelen, "password authentication failed for user \"%s\"",
-			 MAIN_CONNECTION(cp)->sp->user);
+			 cp->sp->user);
 	if (send_error_to_frontend)
 		pool_send_fatal_message(frontend, protoMajor, "XX000", errmessage,
 								"", "", __FILE__, __LINE__);

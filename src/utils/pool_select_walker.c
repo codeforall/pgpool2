@@ -926,7 +926,7 @@ pool_has_pgpool_regclass(void)
 	char	   *user;
 
 	backend = pool_get_session_context(false)->backend;
-	user = MAIN_CONNECTION(backend)->sp->user;
+	user = backend->sp->user;
 
 	if (!relcache)
 	{

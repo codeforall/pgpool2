@@ -41,7 +41,7 @@ typedef struct
 }			PGVersion;
 
 
-extern void send_startup_packet(POOL_CONNECTION_POOL_SLOT * cp);
+extern void send_startup_packet(POOL_CONNECTION_POOL_SLOT * cp, StartupPacket *sp);
 extern void pool_free_startup_packet(StartupPacket *sp);
 
 extern POOL_CONNECTION_POOL_SLOT * make_persistent_db_connection(

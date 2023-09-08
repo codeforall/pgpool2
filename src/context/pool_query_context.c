@@ -660,8 +660,8 @@ pool_send_and_wait(POOL_QUERY_CONTEXT * query_context,
 		wait_for_query_response_with_trans_cleanup(frontend,
 												   CONNECTION(backend, i),
 												   MAJOR(backend),
-												   MAIN_CONNECTION(backend)->pid,
-												   MAIN_CONNECTION(backend)->key);
+												   MAIN_CONNECTION(backend).pid,
+												   MAIN_CONNECTION(backend).key);
 
 		/*
 		 * Check if some error detected.  If so, emit log. This is useful when
@@ -877,8 +877,8 @@ pool_extended_send_and_wait(POOL_QUERY_CONTEXT * query_context,
 			wait_for_query_response_with_trans_cleanup(frontend,
 													   CONNECTION(backend, i),
 													   MAJOR(backend),
-													   MAIN_CONNECTION(backend)->pid,
-													   MAIN_CONNECTION(backend)->key);
+													   MAIN_CONNECTION(backend).pid,
+													   MAIN_CONNECTION(backend).key);
 
 			/*
 			 * Check if some error detected.  If so, emit log. This is useful

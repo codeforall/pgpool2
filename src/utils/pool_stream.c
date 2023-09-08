@@ -112,14 +112,15 @@ pool_open(int fd, bool backend_connection)
 * close read/write file descriptors.
 */
 void
-pool_close(POOL_CONNECTION * cp)
+pool_close(POOL_CONNECTION * cp, bool close_socket)
 {
 	/*
 	 * shutdown connection to the client so that pgpool is not blocked
 	 */
 	if (!cp->isbackend)
 		shutdown(cp->fd, 1);
-	close(cp->fd);
+	if (close_socket)
+		close(cp->fd);
 	cp->socket_state = POOL_SOCKET_CLOSED;
 	pfree(cp->wbuf);
 	pfree(cp->hp);
