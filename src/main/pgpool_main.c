@@ -342,8 +342,8 @@ PgpoolMain(bool discard_status, bool clear_memcache_oidmaps)
 
 	if (num_unix_fds == 0)
 	{
-		ereport(FATAL,
-			   (errmsg("could not create any Unix-domain sockets")));
+		ereport(LOG,
+			   (errmsg("could not create any Unix-domain sockets %m")));
 	}
 
 	/* set unix domain socket path for pgpool PCP communication */
@@ -373,7 +373,7 @@ PgpoolMain(bool discard_status, bool clear_memcache_oidmaps)
 
 	if (num_pcp_fds == 0)
 	{
-		ereport(FATAL,
+		ereport(LOG,
 			   (errmsg("could not create any PCP Unix-domain sockets")));
 	}
 
@@ -674,7 +674,7 @@ PgpoolMain(bool discard_status, bool clear_memcache_oidmaps)
 			POOL_NODE_STATUS *node_status = pool_get_node_status();
 
 			ereport(LOG,
-					(errmsg("%s successfully started. Modified version %s (%s)", PACKAGE, VERSION, PGPOOLVERSION)));
+					(errmsg("%s successfully started. Global Connection Modified version %s (%s)", PACKAGE, VERSION, PGPOOLVERSION)));
 
 			/*
 			 * Very early stage node checking. It is assumed that
@@ -729,7 +729,11 @@ PgpoolMain(bool discard_status, bool clear_memcache_oidmaps)
 				{
 					if (FD_ISSET(ipc_endpoints[i].child_link, &rmask))
 					{
-						ProcessChildRequestOnMain(&ipc_endpoints[i]);
+						ereport(LOG, (errmsg("IPC end point:%d from child:%d is ready",i, ipc_endpoints[i].child_pid)));
+
+						if (ProcessChildRequestOnMain(&ipc_endpoints[i]) == false)
+							ereport(LOG, (errmsg("failed to process child:%d request on main",ipc_endpoints[i].child_pid)));
+
 						reads++;
 					}
 				if (reads >= select_ret)
@@ -743,6 +747,7 @@ PgpoolMain(bool discard_status, bool clear_memcache_oidmaps)
 /* ------------ TESTING CODE ------------ */
 		if (pool_config->process_management == PM_DYNAMIC)
 			service_child_processes();
+		sleep(1);
 		continue;
 
 		for (;;)
@@ -924,6 +929,7 @@ fork_a_child(int *fds, int id)
 		health_check_timer_expired = 0;
 		reload_config_request = 0;
 		my_proc_id = id;
+		ereport(LOG,(errmsg("CHILD PROCESS %d, pid %d",id, getpid())));
 		do_child(fds, ipc_sock[0]);
 	}
 	else if (pid == -1)
@@ -2205,6 +2211,16 @@ pool_get_process_info(pid_t pid)
 		if (process_info[i].pid == pid)
 			return &process_info[i];
 
+	return NULL;
+}
+
+ProcessInfo *
+pool_get_process_info_from_IPC_Endpoint(IPC_Endpoint *endpoint)
+{
+	if (!endpoint || endpoint->proc_info_id <0 || endpoint->proc_info_id >= pool_config->num_init_children)
+		return NULL;
+	if (process_info[endpoint->proc_info_id].pid == endpoint->child_pid)
+			return &process_info[endpoint->proc_info_id];
 	return NULL;
 }
 

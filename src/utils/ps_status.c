@@ -397,7 +397,7 @@ pool_ps_idle_display(POOL_CONNECTION_POOL * backend)
 	StartupPacket *sp;
 	char		psbuf[1024];
 
-	sp = MAIN_CONNECTION(backend)->sp;
+	sp = backend->sp;
 	if (MAIN(backend)->tstate == 'T')
 	{
 		snprintf(psbuf, sizeof(psbuf), "%s %s %s idle in transaction",

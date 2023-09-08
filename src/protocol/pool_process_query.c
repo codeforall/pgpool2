@@ -244,7 +244,7 @@ pool_process_query(POOL_CONNECTION * frontend,
 			bool		cont = true;
 
 			status = read_packets_and_process(frontend, backend, reset_request, &state, &num_fields, &cont);
-			backend->info->client_idle_duration = 0;
+//TODO			backend->info->client_idle_duration = 0;
 			if (status != POOL_CONTINUE)
 				return status;
 			else if (!cont)		/* Detected admin shutdown */
@@ -296,7 +296,7 @@ pool_process_query(POOL_CONNECTION * frontend,
 					bool		cont = true;
 
 					status = read_packets_and_process(frontend, backend, reset_request, &state, &num_fields, &cont);
-					backend->info->client_idle_duration = 0;
+//TODO					backend->info->client_idle_duration = 0;
 					if (status != POOL_CONTINUE)
 						return status;
 					else if (!cont) /* Detected admin shutdown */
@@ -671,7 +671,7 @@ pool_send_frontend_exits(POOL_CONNECTION_POOL * backend)
 		 * send a terminate message to backend if there's an existing
 		 * connection
 		 */
-		if (VALID_BACKEND(i) && CONNECTION_SLOT(backend, i))
+		if (VALID_BACKEND(i) && &CONNECTION_SLOT(backend, i))
 		{
 			pool_write_noerror(CONNECTION(backend, i), "X", 1);
 
@@ -2761,8 +2761,8 @@ insert_lock(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend, char *qu
 		}
 		else
 		{
-			status = do_command(frontend, MAIN(backend), qbuf, MAJOR(backend), MAIN_CONNECTION(backend)->pid,
-								MAIN_CONNECTION(backend)->key, 0);
+			status = do_command(frontend, MAIN(backend), qbuf, MAJOR(backend), MAIN_CONNECTION(backend).pid,
+								MAIN_CONNECTION(backend).key, 0);
 		}
 	}
 	else if (lock_kind == 2)
@@ -2819,8 +2819,8 @@ insert_lock(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend, char *qu
 			}
 			else
 			{
-				status = do_command(frontend, MAIN(backend), qbuf, MAJOR(backend), MAIN_CONNECTION(backend)->pid,
-									MAIN_CONNECTION(backend)->key, 0);
+				status = do_command(frontend, MAIN(backend), qbuf, MAJOR(backend), MAIN_CONNECTION(backend).pid,
+									MAIN_CONNECTION(backend).key, 0);
 			}
 		}
 	}
@@ -2838,7 +2838,7 @@ insert_lock(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend, char *qu
 		{
 			if (deadlock_detected)
 				status = do_command(frontend, CONNECTION(backend, i), POOL_ERROR_QUERY, PROTO_MAJOR_V3,
-									MAIN_CONNECTION(backend)->pid, MAIN_CONNECTION(backend)->key, 0);
+									MAIN_CONNECTION(backend).pid, MAIN_CONNECTION(backend).key, 0);
 			else
 			{
 				if (lock_kind == 1)
@@ -2853,7 +2853,7 @@ insert_lock(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend, char *qu
 					else
 					{
 						status = do_command(frontend, CONNECTION(backend, i), qbuf, PROTO_MAJOR_V3,
-											MAIN_CONNECTION(backend)->pid, MAIN_CONNECTION(backend)->key, 0);
+											MAIN_CONNECTION(backend).pid, MAIN_CONNECTION(backend).key, 0);
 					}
 				}
 				else if (lock_kind == 2)
@@ -2928,7 +2928,7 @@ static POOL_STATUS add_lock_target(POOL_CONNECTION * frontend, POOL_CONNECTION_P
 		per_node_statement_log(backend, MAIN_NODE_ID, "LOCK TABLE pgpool_catalog.insert_lock IN SHARE ROW EXCLUSIVE MODE");
 
 		if (do_command(frontend, MAIN(backend), "LOCK TABLE pgpool_catalog.insert_lock IN SHARE ROW EXCLUSIVE MODE",
-					   PROTO_MAJOR_V3, MAIN_CONNECTION(backend)->pid, MAIN_CONNECTION(backend)->key, 0) != POOL_CONTINUE)
+					   PROTO_MAJOR_V3, MAIN_CONNECTION(backend).pid, MAIN_CONNECTION(backend).key, 0) != POOL_CONTINUE)
 			ereport(ERROR,
 					(errmsg("unable to add lock target"),
 					 errdetail("do_command returned DEADLOCK status")));
@@ -3038,7 +3038,7 @@ static POOL_STATUS insert_oid_into_insert_lock(POOL_CONNECTION * frontend,
 
 	per_node_statement_log(backend, MAIN_NODE_ID, qbuf);
 	status = do_command(frontend, MAIN(backend), qbuf, PROTO_MAJOR_V3,
-						MAIN_CONNECTION(backend)->pid, MAIN_CONNECTION(backend)->key, 0);
+						MAIN_CONNECTION(backend).pid, MAIN_CONNECTION(backend).key, 0);
 	return status;
 }
 
@@ -3944,7 +3944,7 @@ query_ps_status(char *query, POOL_CONNECTION_POOL * backend)
 	if (*query == '\0')
 		return;
 
-	sp = MAIN_CONNECTION(backend)->sp;
+	sp = backend->sp;
 	if (sp)
 		i = snprintf(psbuf, sizeof(psbuf) - 1, "%s %s %s ",
 					 sp->user, sp->database, remote_ps_data);
@@ -4126,14 +4126,14 @@ start_internal_transaction(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * ba
 	{
 		for (i = 0; i < NUM_BACKENDS; i++)
 		{
-			if (VALID_BACKEND_RAW(i) && CONNECTION_SLOT(backend, i) &&
+			if (VALID_BACKEND_RAW(i) && &CONNECTION_SLOT(backend, i) &&
 				!INTERNAL_TRANSACTION_STARTED(backend, i) &&
 				TSTATE(backend, i) == 'I')
 			{
 				per_node_statement_log(backend, i, "BEGIN");
 
 				if (do_command(frontend, CONNECTION(backend, i), "BEGIN", MAJOR(backend),
-							   MAIN_CONNECTION(backend)->pid, MAIN_CONNECTION(backend)->key, 0) != POOL_CONTINUE)
+							   MAIN_CONNECTION(backend).pid, MAIN_CONNECTION(backend).key, 0) != POOL_CONTINUE)
 					ereport(ERROR,
 							(errmsg("unable to start the internal transaction"),
 							 errdetail("do_command returned DEADLOCK status")));
@@ -4198,7 +4198,7 @@ end_internal_transaction(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * back
 				PG_TRY();
 				{
 					if (do_command(frontend, CONNECTION(backend, i), "COMMIT", MAJOR(backend),
-								   MAIN_CONNECTION(backend)->pid, MAIN_CONNECTION(backend)->key, 1) != POOL_CONTINUE)
+								   MAIN_CONNECTION(backend).pid, MAIN_CONNECTION(backend).key, 1) != POOL_CONTINUE)
 					{
 						ereport(ERROR,
 								(errmsg("unable to COMMIT the transaction"),
@@ -4251,7 +4251,7 @@ end_internal_transaction(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * back
 			PG_TRY();
 			{
 				if (do_command(frontend, MAIN(backend), "COMMIT", MAJOR(backend),
-							   MAIN_CONNECTION(backend)->pid, MAIN_CONNECTION(backend)->key, 1) != POOL_CONTINUE)
+							   MAIN_CONNECTION(backend).pid, MAIN_CONNECTION(backend).key, 1) != POOL_CONTINUE)
 				{
 					ereport(ERROR,
 							(errmsg("unable to COMMIT the transaction"),
@@ -4859,7 +4859,7 @@ SELECT_RETRY:
 	 * may return 0.
 	 */
 	if (pool_config->load_balance_mode &&
-		BACKEND_INFO(backend->info->load_balancing_node).backend_status == CON_DOWN)
+		BACKEND_INFO(backend->backend_end_point->load_balancing_node).backend_status == CON_DOWN)
 	{
 		/* select load balancing node */
 		POOL_SESSION_CONTEXT *session_context;
@@ -4914,7 +4914,7 @@ SELECT_RETRY:
 	/* select timeout */
 	if (fds == 0)
 	{
-		backend->info->client_idle_duration++;
+//TODO		backend->info->client_idle_duration++;
 		if (*InRecovery == RECOVERY_INIT && pool_config->client_idle_limit > 0)
 		{
 			idle_count++;
@@ -4961,7 +4961,7 @@ SELECT_RETRY:
 			/*
 			 * make sure that connection slot exists
 			 */
-			if (CONNECTION_SLOT(backend, i) == 0)
+			if (&CONNECTION_SLOT(backend, i) == 0)
 			{
 				ereport(LOG,
 						(errmsg("error occurred while reading and processing packets"),
@@ -5026,7 +5026,7 @@ SELECT_RETRY:
 					 * we do not need to trigger failover.
 					 */
 					if (SL_MODE &&
-						(i == PRIMARY_NODE_ID || i == backend->info->load_balancing_node))
+						(i == PRIMARY_NODE_ID || i == backend->backend_end_point->load_balancing_node))
 					{
 						/* detach backend node. */
 						was_error = 1;
@@ -5206,7 +5206,7 @@ pool_push_pending_data(POOL_CONNECTION * backend)
 	{
 		POOL_CONNECTION *con;
 
-		con = session_context->backend->slots[session_context->load_balance_node_id]->con;
+		con = session_context->backend->slots[session_context->load_balance_node_id].con;
 		pool_write(con, "H", 1);
 		len = htonl(sizeof(len));
 		pool_write_and_flush(con, &len, sizeof(len));

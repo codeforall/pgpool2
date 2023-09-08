@@ -63,6 +63,7 @@ POOL_CONNECTION_POOL *pool_connection_pool;
 static int	pool_index;			/* Active pool index */
 ChildBackendConnection	child_backend_connection;
 
+
 volatile sig_atomic_t backend_timer_expired = 0;	/* flag for connection
 													 * closed timer is expired */
 volatile sig_atomic_t health_check_timer_expired;	/* non 0 if health check
@@ -157,6 +158,7 @@ pool_get_cp(char *user, char *database, int protoMajor, int check_socket)
 void
 pool_discard_cp(char *user, char *database, int protoMajor)
 {
+#ifdef NOT_USED
 	POOL_CONNECTION_POOL *p = pool_get_cp(user, database, protoMajor, 0);
 	ConnectionInfo *info;
 	int			i,
@@ -188,6 +190,7 @@ pool_discard_cp(char *user, char *database, int protoMajor)
 	memset(p, 0, sizeof(POOL_CONNECTION_POOL));
 	p->info = info;
 	memset(p->info, 0, sizeof(ConnectionInfo) * MAX_NUM_BACKENDS);
+#endif
 }
 
 #ifdef NOT_USED
@@ -298,6 +301,7 @@ pool_create_cp(void)
 void
 pool_connection_pool_timer(POOL_CONNECTION_POOL * backend)
 {
+	#ifdef NOT_USED
 	POOL_CONNECTION_POOL *p = pool_connection_pool;
 	int			i;
 
@@ -335,6 +339,7 @@ pool_connection_pool_timer(POOL_CONNECTION_POOL * backend)
 			 errdetail("setting alarm after %d seconds", pool_config->connection_life_time)));
 
 	pool_alarm(pool_backend_timer_handler, pool_config->connection_life_time);
+	#endif
 }
 
 /*
@@ -350,7 +355,7 @@ void
 pool_backend_timer(void)
 {
 #define TMINTMAX 0x7fffffff
-
+#ifdef UN_USED
 	POOL_CONNECTION_POOL *p = pool_connection_pool;
 	int			i,
 				j;
@@ -431,6 +436,7 @@ pool_backend_timer(void)
 	}
 	update_pooled_connection_count();
 	POOL_SETMASK(&UnBlockSig);
+#endif
 }
 
 /*
@@ -812,7 +818,7 @@ static bool ConnectBackendSlotSocket(int slot_no)
 		return false;
 
 	// cp->sp = NULL;
-	cp->connection = pool_open(fd, true);
+	cp->con = pool_open(fd, true);
 	cp->key = -1;
 	cp->pid = -1;
 	return true;
@@ -927,7 +933,7 @@ ConnectBackendSocktes(void)
 			// p->info[i].client_idle_duration = 0;
 			// p->slots[i] = s;
 
-			pool_init_params(&child_backend_connection.slots[i].connection->params);
+			pool_init_params(&child_backend_connection.slots[i].con->params);
 
 			if (BACKEND_INFO(i).backend_status != CON_UP)
 			{
@@ -1002,6 +1008,7 @@ pool_pool_index(void)
 void
 close_all_backend_connections(void)
 {
+#ifdef NOT_USED
 	int			i;
 	POOL_CONNECTION_POOL *p = pool_connection_pool;
 
@@ -1021,6 +1028,7 @@ close_all_backend_connections(void)
 	}
 
 	POOL_SETMASK(&oldmask);
+#endif
 }
 
 void update_pooled_connection_count(void)
@@ -1030,7 +1038,7 @@ void update_pooled_connection_count(void)
 	POOL_CONNECTION_POOL *p = pool_connection_pool;
 	for (i = 0; i < pool_config->max_pool; i++)
 	{
-		if (MAIN_CONNECTION(p))
+		if (&MAIN_CONNECTION(p))
 			count++;
 	}
 	pool_get_my_process_info()->pooled_connections = count;
@@ -1038,10 +1046,11 @@ void update_pooled_connection_count(void)
 
 
 /* Global Connection Pool owned by Main process and lives in shared memory */
-int max_pool_size = 10; //pool_config->max_pool;
+int max_pool_size = 2; //pool_config->max_pool;
 ConnectionPoolEntry	*ConnectionPool = NULL; /* Global connection pool */
-static int get_sockets_array(BackendEndPoint*  backend_endpoint, int **sockets, int* num_sockets);
-static void import_startup_packet_into_child(BackendEndPoint* backend_end_point);
+static int get_sockets_array(BackendEndPoint*  backend_endpoint, int **sockets, int* num_sockets, bool pooled_socks);
+static void import_startup_packet_into_child(StartupPacket* sp, char* startup_packet_data);
+static void import_pooled_startup_packet_into_child(BackendEndPoint* backend_end_point);
 static void register_new_lease(int pool_id, LEASE_TYPES	lease_type, IPC_Endpoint* ipc_endpoint);
 
 
@@ -1064,22 +1073,54 @@ GetBackendEndPoint(int pool_id)
 	return &ConnectionPool[pool_id].endPoint;
 }
 
+ConnectionPoolEntry*
+GetConnectionPoolEntry(int pool_id)
+{
+	if (pool_id < 0 || pool_id >= max_pool_size)
+		return NULL;
+	return &ConnectionPool[pool_id];
+}
+
 bool
-InstallSocketsInConnectionPool(int pool_id, int *sockets, int num_sockets, int *slot_ids)
+ExportLocalSocketsToBackendPool(void)
+{
+	int *sockets = NULL;
+	int num_sockets = 0;
+
+	if (processType != PT_CHILD)
+		return false;
+
+	get_sockets_array( GetChildBackendConnection()->backend_end_point, &sockets, &num_sockets, false);
+	if (sockets && num_sockets > 0)
+	{
+		bool ret;
+		ret = SendBackendSocktesToMainPool(parent_link, num_sockets, sockets);
+		pfree(sockets);
+		return ret;
+	}
+	else
+		ereport(LOG,
+			(errmsg("No socket found to transfer to to global connection pool")));
+
+	return true;
+}
+
+bool
+InstallSocketsInConnectionPool(int pool_id, int *sockets)
 {
 	int i;
-	
+	ConnectionPoolEntry *pool_entry;
+
 	if (processType != PT_MAIN)
 		return false;
 
-	if (pool_id < 0 || pool_id >= max_pool_size)
-		return false;
-	if (num_sockets > MAX_NUM_BACKENDS)
+	pool_entry = GetConnectionPoolEntry(pool_id);
+	if (!pool_entry)
 		return false;
 
-	for (i = 0; i < num_sockets; i++)
+	for (i = 0; i < pool_entry->endPoint.num_sockets; i++)
 	{
-		int slot_no = slot_ids[i];
+		int slot_no = pool_entry->endPoint.backend_ids[i];
 		ConnectionPool[pool_id].endPoint.conn_slots[slot_no].socket = sockets[i];
 	}
 	return true;
@@ -1104,6 +1145,7 @@ ExportLocalBackendConnectionToPool(void)
 		return false;
 	}
 
+	current_backend_con->backend_end_point = backend_end_point;
 	memcpy(backend_end_point->startup_packet_data, sp->startup_packet, sp->len);
 	backend_end_point->sp.len = sp->len;
 	backend_end_point->sp.startup_packet = backend_end_point->startup_packet_data;
@@ -1114,6 +1156,9 @@ ExportLocalBackendConnectionToPool(void)
 	StrNCpy(backend_end_point->database, sp->database, sizeof(backend_end_point->database));
 	StrNCpy(backend_end_point->user, sp->user, sizeof(backend_end_point->user));
 
+	backend_end_point->sp.database= backend_end_point->database;
+	backend_end_point->sp.user = backend_end_point->user;
+
 	if (sp->major == PROTO_MAJOR_V3 && sp->application_name)
 	{
 		/* adjust the application name pointer in new packet */
@@ -1122,25 +1167,116 @@ ExportLocalBackendConnectionToPool(void)
 	else
 		backend_end_point->sp.application_name = NULL;
 
-	memset(backend_end_point->conn_slots, 0, sizeof(BackendConnection) * MAX_NUM_BACKENDS);
+	// memset(backend_end_point->conn_slots, 0, sizeof(BackendConnection) * MAX_NUM_BACKENDS);
 
 	sock_index = 0;
 	for (i = 0; i < NUM_BACKENDS; i++)
 	{
 		if (VALID_BACKEND(i))
 		{
-			backend_end_point->conn_slots[i].auth_kind = current_backend_con->slots[i].connection->auth_kind;
-			backend_end_point->conn_slots[i].pwd_size = current_backend_con->slots[i].connection->pwd_size;
-			memcpy(backend_end_point->conn_slots[i].password,current_backend_con->slots[i].connection->password, sizeof(backend_end_point->conn_slots[i].password));
-			backend_end_point->conn_slots[i].passwordType = current_backend_con->slots[i].connection->passwordType;
-			memcpy(backend_end_point->conn_slots[i].salt,current_backend_con->slots[i].connection->salt, sizeof(backend_end_point->conn_slots[i].salt));
+			backend_end_point->conn_slots[i].auth_kind = current_backend_con->slots[i].con->auth_kind;
+			backend_end_point->conn_slots[i].pwd_size = current_backend_con->slots[i].con->pwd_size;
+			memcpy(backend_end_point->conn_slots[i].password,current_backend_con->slots[i].con->password, sizeof(backend_end_point->conn_slots[i].password));
+			backend_end_point->conn_slots[i].passwordType = current_backend_con->slots[i].con->passwordType;
+			memcpy(backend_end_point->conn_slots[i].salt,current_backend_con->slots[i].con->salt, sizeof(backend_end_point->conn_slots[i].salt));
 
-			backend_end_point->conn_slots[i].key = current_backend_con->slots[i].connection->con_info->key;
-			backend_end_point->conn_slots[i].pid = current_backend_con->slots[i].connection->con_info->pid;
+			// backend_end_point->conn_slots[i].key = current_backend_con->slots[i].key;
+			// backend_end_point->conn_slots[i].pid = current_backend_con->slots[i].pid;
 			backend_end_point->backend_ids[sock_index++] = i;
+		}
+		else
+		{
+			backend_end_point->conn_slots[i].key = -1;
+			backend_end_point->conn_slots[i].pid = -1;
+			backend_end_point->conn_slots[i].socket = -1;
 		}
 	}
 	backend_end_point->num_sockets = sock_index;
+	return true;
+}
+
+bool
+DiscardPooledConnectio(int pool_id)
+{
+	int i;
+	BackendEndPoint* backend_end_point = GetBackendEndPoint(pool_id);
+
+	if (backend_end_point == NULL)
+	{
+		ereport(LOG,
+			(errmsg("cannot get backend connection for pool_id:%d", pool_id)));
+		return false;
+	}
+
+	for (i = 0; i < backend_end_point->num_sockets; i++)
+	{
+		int slot_no = backend_end_point->backend_ids[i];
+		close(backend_end_point->conn_slots[slot_no].socket);
+	}
+
+	memset(backend_end_point, 0, sizeof(BackendEndPoint));
+	return true;
+}
+
+bool
+DiscardChildLocalBackendConnection(bool close_socket)
+{
+	ChildBackendConnection* current_backend_con = GetChildBackendConnection();
+	int i;
+
+	if (processType != PT_CHILD)
+		return false;
+
+	int pool_id = current_backend_con->pool_id;
+	for (i = 0; i < NUM_BACKENDS; i++)
+	{
+		if (current_backend_con->slots[i].con)
+		{
+			pool_close(current_backend_con->slots[i].con, close_socket);
+			current_backend_con->slots[i].con = NULL;
+		}
+	}
+	/* Free Startup Packet */
+	if (current_backend_con->sp)
+	{
+		if (current_backend_con->sp->database)
+			pfree(current_backend_con->sp->database);
+		if(current_backend_con->sp->user)
+			pfree(current_backend_con->sp->user);
+
+		pfree(current_backend_con->sp->startup_packet);
+		pfree(current_backend_con->sp);
+		current_backend_con->sp = NULL;
+	}
+	memset(current_backend_con, 0, sizeof(ChildBackendConnection));
+	/* Restore the pool_id */
+	current_backend_con->pool_id = pool_id;
+
+	return true;
+}
+
+bool
+InitializeChildLocalBackendConnection(int pool_id, StartupPacket* sp)
+{
+	int i;
+	ChildBackendConnection* current_backend_con = GetChildBackendConnection();
+	BackendEndPoint* backend_end_point = NULL;
+	int num_sockets = backend_end_point->num_sockets;
+	int *backend_ids = backend_end_point->backend_ids;
+
+	if (processType != PT_CHILD)
+		return false;
+	
+	if (pool_id > 0)
+		backend_end_point = GetBackendEndPoint(pool_id);
+
+	current_backend_con->pool_id = pool_id;
+	current_backend_con->backend_end_point = backend_end_point;
+	current_backend_con->borrowed = false;
+
+	import_startup_packet_into_child(sp, NULL);
+
+	/* Slots should already have been initialized by Connect backend */
 	return true;
 }
 
@@ -1160,28 +1296,29 @@ ImportPoolConnectionIntoChild(int pool_id, int *sockets)
 	current_backend_con->backend_end_point = backend_end_point;
 	current_backend_con->borrowed = true;
 
-	import_startup_packet_into_child(backend_end_point);
+	import_pooled_startup_packet_into_child(backend_end_point);
 
 	for (i = 0; i < num_sockets; i++)
 	{
 		int slot_no = backend_ids[i];
 
-		current_backend_con->slots[slot_no].connection = pool_open(sockets[i], true);
-		current_backend_con->slots[slot_no].connection->auth_kind = backend_end_point->conn_slots[slot_no].auth_kind;
-		current_backend_con->slots[slot_no].connection->pwd_size = backend_end_point->conn_slots[slot_no].pwd_size;
-		memcpy(current_backend_con->slots[slot_no].connection->password, backend_end_point->conn_slots[slot_no].password, sizeof(backend_end_point->conn_slots[slot_no].password));
-		current_backend_con->slots[slot_no].connection->passwordType =backend_end_point->conn_slots[slot_no].passwordType;
-		memcpy(current_backend_con->slots[slot_no].connection->salt, backend_end_point->conn_slots[slot_no].salt, sizeof(backend_end_point->conn_slots[slot_no].salt));
+		current_backend_con->slots[slot_no].con = pool_open(sockets[i], true);
+		current_backend_con->slots[slot_no].con->auth_kind = backend_end_point->conn_slots[slot_no].auth_kind;
+		current_backend_con->slots[slot_no].con->pwd_size = backend_end_point->conn_slots[slot_no].pwd_size;
+		memcpy(current_backend_con->slots[slot_no].con->password, backend_end_point->conn_slots[slot_no].password, sizeof(backend_end_point->conn_slots[slot_no].password));
+		current_backend_con->slots[slot_no].con->passwordType =backend_end_point->conn_slots[slot_no].passwordType;
+		memcpy(current_backend_con->slots[slot_no].con->salt, backend_end_point->conn_slots[slot_no].salt, sizeof(backend_end_point->conn_slots[slot_no].salt));
 
-		current_backend_con->slots[i].connection->con_info->key = backend_end_point->conn_slots[slot_no].key;
-		current_backend_con->slots[slot_no].connection->con_info->pid = backend_end_point->conn_slots[slot_no].pid;
+		current_backend_con->slots[slot_no].key = backend_end_point->conn_slots[slot_no].key;
+		current_backend_con->slots[slot_no].pid = backend_end_point->conn_slots[slot_no].pid;
+
 
 	}
 	return true;
 }
 
 static void
-import_startup_packet_into_child(BackendEndPoint* backend_end_point)
+import_pooled_startup_packet_into_child(BackendEndPoint* backend_end_point)
 {
 
 	ChildBackendConnection* current_backend_con = GetChildBackendConnection();
@@ -1190,19 +1327,33 @@ import_startup_packet_into_child(BackendEndPoint* backend_end_point)
 		ereport(ERROR,
 				(errmsg("incorrect packet length (%d)", backend_end_point->sp.len)));
 
+	import_startup_packet_into_child(&backend_end_point->sp, backend_end_point->startup_packet_data);
+}
+
+static void
+import_startup_packet_into_child(StartupPacket* sp, char* startup_packet_data)
+{
+
+	ChildBackendConnection* current_backend_con = GetChildBackendConnection();
+
+	if (sp->len <= 0 || sp->len >= MAX_STARTUP_PACKET_LENGTH)
+		ereport(ERROR,
+				(errmsg("incorrect packet length (%d)", sp->len)));
+
 	current_backend_con->sp = MemoryContextAlloc(TopMemoryContext, sizeof(StartupPacket));
-	current_backend_con->sp->len = backend_end_point->sp.len;
+	current_backend_con->sp->len = sp->len;
 	current_backend_con->sp->startup_packet =  MemoryContextAlloc(TopMemoryContext, current_backend_con->sp->len); 
 
-	memcpy(current_backend_con->sp->startup_packet, backend_end_point->startup_packet_data, backend_end_point->sp.len);
+	memcpy(current_backend_con->sp->startup_packet,
+		startup_packet_data?startup_packet_data: sp->startup_packet, current_backend_con->sp->len);
 
-	current_backend_con->sp->major = backend_end_point->sp.major;
-	current_backend_con->sp->minor = backend_end_point->sp.minor;
+	current_backend_con->sp->major = sp->major;
+	current_backend_con->sp->minor = sp->minor;
 
-	current_backend_con->sp->database = pstrdup(backend_end_point->sp.database);
-	current_backend_con->sp->user = pstrdup(backend_end_point->sp.user);
+	current_backend_con->sp->database = pstrdup(sp->database);
+	current_backend_con->sp->user = pstrdup(sp->user);
 
-	if (current_backend_con->sp->major == PROTO_MAJOR_V3 && backend_end_point->sp.application_name)
+	if (sp->major == PROTO_MAJOR_V3 && sp->application_name)
 	{
 		/* adjust the application name pointer in new packet */
 		current_backend_con->sp->application_name = current_backend_con->sp->startup_packet + (current_backend_con->sp->application_name - current_backend_con->sp->startup_packet);
@@ -1217,6 +1368,8 @@ GetPooledConnectionForLending(char *user, char *database, int protoMajor, LEASE_
 	int i;
 	int free_pool_slot = -1;
 	int unused_pool_slot = -1;
+	ereport(LOG,
+		(errmsg("Finding for user:%s database:%s protoMajor:%d", user, database, protoMajor)));
 	for (i =0; i < max_pool_size; i++)
 	{
 		if (ConnectionPool[i].status == POOL_ENTRY_READY &&
@@ -1230,10 +1383,13 @@ GetPooledConnectionForLending(char *user, char *database, int protoMajor, LEASE_
 					return i;
 				}
 		}
-		else if (free_pool_slot > -1 && ConnectionPool[i].status == POOL_ENTRY_EMPTY)
+		else if (free_pool_slot == -1 && ConnectionPool[i].status == POOL_ENTRY_EMPTY)
 			free_pool_slot = i;
 
 	}
+	ereport(LOG,
+		(errmsg("No pooled connection for user:%s database:%s protoMajor:%d, Free slot:%d", user, database, protoMajor,free_pool_slot)));
+
 	/* No pooled connection found. Return empty slot */
 	if (free_pool_slot > -1)
 	{
@@ -1242,6 +1398,8 @@ GetPooledConnectionForLending(char *user, char *database, int protoMajor, LEASE_
 	}
 
 	/* TODO Find the pooled entry that can be discarded and re-used */
+	ereport(LOG,
+		(errmsg("No pooled connection for user:%s database:%s protoMajor:%d, And No Free slot available ", user, database, protoMajor)));
 
 	/* Nothing found */
 	*lease_type = LEASE_TYPE_NO_AVAILABLE_SLOT;
@@ -1257,6 +1415,9 @@ LeasePooledConnectionToChild(IPC_Endpoint* ipc_endpoint)
 	int				pool_id = -1;
 	int				i;
 
+	if (processType != PT_MAIN)
+		return false;
+
 	if (ipc_endpoint->proc_info_id < 0 || ipc_endpoint->proc_info_id >= pool_config->num_init_children)
 		return false;
 	child_proc_info = &process_info[ipc_endpoint->proc_info_id];
@@ -1269,22 +1430,51 @@ LeasePooledConnectionToChild(IPC_Endpoint* ipc_endpoint)
 											child_proc_info->major,
 											&lease_type);
 
-	if (lease_type == LEASE_TYPE_READY_TO_USE)
+	ereport(LOG,
+		(errmsg("pool_id:%d with lease type:%d reserved for child:%d", pool_id, lease_type, ipc_endpoint->child_pid)));
+
+	if (InformChildAboutLeaseStatus(ipc_endpoint->child_link, lease_type) == false)
+	{
+		ereport(LOG,
+			(errmsg("Failed to send (pool_id:%d) lease type:%d to child:%d", pool_id, lease_type, ipc_endpoint->child_pid)));
+		return false;
+	}
+
+	register_new_lease(pool_id, lease_type, ipc_endpoint);
+
+	if (lease_type == LEASE_TYPE_READY_TO_USE || lease_type == LEASE_TYPE_DISCART_AND_CREATE)
 	{
 		int *sockets = NULL;
 		int num_sockets = 0;
-		get_sockets_array(&ConnectionPool[pool_id].endPoint, &sockets, &num_sockets);
+		get_sockets_array(&ConnectionPool[pool_id].endPoint, &sockets, &num_sockets, true);
 		if (sockets && num_sockets > 0)
 		{
 			bool ret;
 			ret = TransferSocketsBetweenProcesses(ipc_endpoint->child_link, num_sockets, sockets);
 			pfree(sockets);
-			if(ret)
-				register_new_lease(pool_id, lease_type, ipc_endpoint);
 			return ret;
 		}
+		else
+			ereport(LOG,
+				(errmsg("No socket found to transfer to to child:%d", ipc_endpoint->child_pid)));
 	}
-	return false;
+	return true;
+}
+
+bool
+ReleasePooledConnection(ConnectionPoolEntry* pool_entry, IPC_Endpoint* ipc_endpoint, bool need_cleanup)
+{
+    if (pool_entry->borrower_pid != ipc_endpoint->child_pid)
+    {
+        ereport(LOG,
+                (errmsg("child:%d is not the borrower of pool_id:%d borrowed by:%d", ipc_endpoint->child_pid, pool_entry->pool_id, pool_entry->borrower_pid)));
+        return false;
+    }
+    pool_entry->borrower_pid = -1;
+	pool_entry->need_cleanup = need_cleanup;
+	pool_entry->status = POOL_ENTRY_READY;
+
+	return true;
 }
 
 static void
@@ -1302,7 +1492,7 @@ register_new_lease(int pool_id, LEASE_TYPES lease_type, IPC_Endpoint* ipc_endpoi
 
 /* TODO: Handle disconnected socktes */
 static int
-get_sockets_array(BackendEndPoint*  backend_endpoint, int **sockets, int* num_sockets)
+get_sockets_array(BackendEndPoint*  backend_endpoint, int **sockets, int* num_sockets, bool pooled_socks)
 {
 	int i;
 	int *socks = NULL;
@@ -1316,8 +1506,16 @@ get_sockets_array(BackendEndPoint*  backend_endpoint, int **sockets, int* num_so
 	for (i = 0; i < *num_sockets; i++)
 	{
 		int sock_index = backend_endpoint->backend_ids[i];
-		if (backend_endpoint->conn_slots[sock_index].socket > 0)
+		if (pooled_socks)
+		{
+			// if (backend_endpoint->conn_slots[sock_index].socket > 0)
 			socks[i] = backend_endpoint->conn_slots[sock_index].socket;
+		}
+		else
+		{
+			ChildBackendConnection* current_backend_con = GetChildBackendConnection();
+			socks[i] = 	current_backend_con->slots[sock_index].con->fd;
+		}
 	}
 
 	*sockets = socks;

@@ -269,6 +269,98 @@ typedef struct
 								 * query containing pg_terminate_backend */
 }			POOL_CONNECTION;
 
+typedef enum POOL_ENTRY_STATUS
+{
+	POOL_ENTRY_EMPTY = 0,
+	POOL_ENTRY_LEASED,
+	POOL_ENTRY_READY,
+	POOL_ENTRY_RESERVED
+}			POOL_ENTRY_STATUS;
+
+typedef struct BackendConnection
+{
+	ConnectionInfo conn_info;
+	int			pid;			/* backend process id */
+	int			key;			/* cancel key */
+	int			counter;		/* used counter */
+	time_t		create_time;	/* connection creation time */
+	int 		socket;
+    bool        connected;
+
+	/*
+	 * following are used to remember when re-use the authenticated connection
+	 */
+	int			auth_kind;		/* 3: clear text password, 4: crypt password,
+								 * 5: md5 password */
+	int			pwd_size;		/* password (sent back from frontend) size in
+								 * host order */
+	char		password[MAX_PASSWORD_SIZE + 1];	/* password (sent back
+													 * from frontend) */
+	char		salt[4];		/* password salt */
+	PasswordType passwordType;
+
+	volatile bool swallow_termination;
+}BackendConnection;
+
+typedef struct
+{
+	char		database[SM_DATABASE];	/* Database name */
+	char		user[SM_USER];	/* User name */
+    int         load_balancing_node;
+	char        startup_packet_data[MAX_STARTUP_PACKET_LENGTH];			/* startup packet info */
+	StartupPacket sp;			/* startup packet info */
+	int			key;			/* cancel key */
+    int         auth_kind;
+    int			num_sockets;
+    int         backend_ids[MAX_NUM_BACKENDS];
+	BackendConnection conn_slots[MAX_NUM_BACKENDS];
+    
+}			BackendEndPoint;
+
+typedef struct
+{
+	BackendEndPoint 	endPoint;
+	POOL_ENTRY_STATUS	status;
+    int     pool_id;
+	pid_t	borrower_pid;
+	bool	need_cleanup;
+	time_t 	leased_time;
+	int		leased_count;
+}	ConnectionPoolEntry;
+
+typedef enum LEASE_TYPES
+{
+	LEASE_TYPE_INVALID,
+	LEASE_TYPE_READY_TO_USE,
+	LEASE_TYPE_DISCART_AND_CREATE,
+	LEASE_TYPE_EMPTY_SLOT_RESERVED,
+	LEASE_TYPE_NO_AVAILABLE_SLOT,
+	LEASE_TYPE_NON_POOL_CONNECTION,
+	LEASE_TYPE_LEASE_FAILED
+} LEASE_TYPES;
+
+typedef struct ChildBackendConnectionSlot
+{
+	int			pid;			/* backend pid */
+	int			key;			/* cancel key */
+	time_t		closetime;		/* absolute time in second when the connection
+								 * closed if 0, that means the connection is
+								 * under use. */
+	POOL_CONNECTION *con;
+}			ChildBackendConnectionSlot;
+
+typedef struct ChildBackendConnection
+{
+	StartupPacket 		*sp;			/* startup packet info */
+	bool 				borrowed;		/* true if borrowed from global pool */
+	BackendEndPoint*	backend_end_point; /* Reference to global pool end point in shared mem */
+	int					pool_id;		/* global pool id */
+	ChildBackendConnectionSlot slots[MAX_NUM_BACKENDS];
+} 			ChildBackendConnection;
+
+#define POOL_CONNECTION_POOL ChildBackendConnection
+#define POOL_CONNECTION_POOL_SLOT ChildBackendConnectionSlot
+
 /*
  * connection pool structure
  */
@@ -281,14 +373,13 @@ typedef struct
 	time_t		closetime;		/* absolute time in second when the connection
 								 * closed if 0, that means the connection is
 								 * under use. */
-}			POOL_CONNECTION_POOL_SLOT;
+}			POOL_CONNECTION_POOL_SLOT_OLD;
 
 typedef struct
 {
 	ConnectionInfo *info;		/* connection info on shmem */
-	POOL_CONNECTION_POOL_SLOT *slots[MAX_NUM_BACKENDS];
-}			POOL_CONNECTION_POOL;
-
+	POOL_CONNECTION_POOL_SLOT_OLD *slots[MAX_NUM_BACKENDS];
+}			POOL_CONNECTION_POOL_OLD;
 
 /* Defined in pool_session_context.h */
 extern int	pool_get_major_version(void);
@@ -323,7 +414,7 @@ extern int	my_main_node_id;
 	 (*(my_backend_status[(backend_id)]) == CON_CONNECT_WAIT))
 
 #define CONNECTION_SLOT(p, slot) ((p)->slots[(slot)])
-#define CONNECTION(p, slot) (CONNECTION_SLOT(p, slot)->con)
+#define CONNECTION(p, slot) (CONNECTION_SLOT(p, slot).con)
 
 /*
  * The first DB node id appears in pgpool.conf or the first "live" DB
@@ -354,7 +445,7 @@ extern int	my_main_node_id;
 #define MAIN_NODE_ID (pool_virtual_main_db_node_id())
 #define IS_MAIN_NODE_ID(node_id) (MAIN_NODE_ID == (node_id))
 #define MAIN_CONNECTION(p) ((p)->slots[MAIN_NODE_ID])
-#define MAIN(p) MAIN_CONNECTION(p)->con
+#define MAIN(p) MAIN_CONNECTION(p).con
  
 /*
  * Backend node status in streaming replication mode.
@@ -643,6 +734,7 @@ extern BackendInfo * pool_get_node_info(int node_number);
 extern int	pool_get_node_count(void);
 extern int *pool_get_process_list(int *array_size);
 extern ProcessInfo * pool_get_process_info(pid_t pid);
+extern ProcessInfo * pool_get_process_info_from_IPC_Endpoint(IPC_Endpoint *endpoint);
 extern void pool_sleep(unsigned int second);
 extern int	PgpoolMain(bool discard_status, bool clear_memcache_oidmaps);
 extern int	pool_send_to_frontend(char *data, int len, bool flush);

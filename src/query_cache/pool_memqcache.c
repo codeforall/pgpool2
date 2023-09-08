@@ -563,12 +563,12 @@ encode_key(const char *s, char *buf, POOL_CONNECTION_POOL * backend)
 	int			q_length;
 	int			length;
 
-	u_length = strlen(backend->info->user);
+	u_length = strlen(backend->backend_end_point->user);
 	ereport(DEBUG1,
 			(errmsg("memcache encode key"),
-			 errdetail("username: \"%s\" database_name: \"%s\"", backend->info->user, backend->info->database)));
+			 errdetail("username: \"%s\" database_name: \"%s\"", backend->backend_end_point->user, backend->backend_end_point->database)));
 
-	d_length = strlen(backend->info->database);
+	d_length = strlen(backend->backend_end_point->database);
 
 	q_length = strlen(s);
 	ereport(DEBUG1,
@@ -579,7 +579,7 @@ encode_key(const char *s, char *buf, POOL_CONNECTION_POOL * backend)
 
 	strkey = (char *) palloc(sizeof(char) * length);
 
-	snprintf(strkey, length, "%s%s%s", backend->info->user, s, backend->info->database);
+	snprintf(strkey, length, "%s%s%s", backend->backend_end_point->user, s, backend->backend_end_point->database);
 
 	pool_md5_hash(strkey, strlen(strkey), buf);
 	ereport(DEBUG1,
@@ -1523,7 +1523,7 @@ pool_get_database_oid(void)
 	 * Search relcache.
 	 */
 	oid = (int) (intptr_t) pool_search_relcache(relcache, backend,
-												MAIN_CONNECTION(backend)->sp->database);
+												backend->sp->database);
 	return oid;
 }
 
