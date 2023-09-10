@@ -160,69 +160,20 @@ pool_coninfo(int child, int connection_pool, int backend)
 }
 
 /*
- * locate and return the shared memory ConnectionInfo having the
- * backend connection with the pid
- * if the connection is found the *backend_node_id contains the backend node id
- * of the backend node that has the connection
- */
-ConnectionInfo *
-pool_coninfo_backend_pid(int backend_pid, int *backend_node_id)
-{
-	int			child;
-
-	/*
-	 * look for the child process that has the backend with the pid
-	 */
-
-	ereport(DEBUG1,
-			(errmsg("searching for the connection with backend pid:%d", backend_pid)));
-
-	for (child = 0; child < pool_config->num_init_children; child++)
-	{
-		int			pool;
-
-		if (process_info[child].pid)
-		{
-			ProcessInfo *pi = pool_get_process_info(process_info[child].pid);
-
-			for (pool = 0; pool < pool_config->max_pool; pool++)
-			{
-				int			backend_id;
-
-				for (backend_id = 0; backend_id < NUM_BACKENDS; backend_id++)
-				{
-					int			poolBE = pool * MAX_NUM_BACKENDS + backend_id;
-
-					if (ntohl(pi->connection_info[poolBE].pid) == backend_pid)
-					{
-						ereport(DEBUG1,
-								(errmsg("found the connection with backend pid:%d on backend node %d", backend_pid, backend_id)));
-						*backend_node_id = backend_id;
-						return &pi->connection_info[poolBE];
-					}
-				}
-			}
-		}
-
-	}
-	return NULL;
-}
-
-/*
  * sets the flag to mark that the connection will be terminated by the
  * backend and it should not be considered as a backend node failure.
  * This flag is used to handle pg_terminate_backend()
  */
 void
-pool_set_connection_will_be_terminated(ConnectionInfo * connInfo)
+pool_set_connection_will_be_terminated(BackendConnection * backend_connection)
 {
-	connInfo->swallow_termination = 1;
+	backend_connection->swallow_termination = true;
 }
 
 void
-pool_unset_connection_will_be_terminated(ConnectionInfo * connInfo)
+pool_unset_connection_will_be_terminated(BackendConnection * backend_connection)
 {
-	connInfo->swallow_termination = 0;
+	backend_connection->swallow_termination = false;
 }
 
 /*

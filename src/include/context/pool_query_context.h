@@ -28,6 +28,7 @@
 
 #include "pool.h"
 #include "pool_process_context.h"
+#include "protocol/pool_connection_pool.h"
 #include "parser/nodes.h"
 #include "parser/parsenodes.h"
 #include "utils/palloc.h"
@@ -77,7 +78,7 @@ typedef struct
 								 * query. */
 	int			num_original_params;	/* number of parameters in original
 										 * query */
-	ConnectionInfo *pg_terminate_backend_conn;
+	BackendConnection *pg_terminate_backend_conn;
 
 	/*
 	 * pointer to the shared memory connection info object referred by

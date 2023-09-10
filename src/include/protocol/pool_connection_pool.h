@@ -67,7 +67,8 @@ extern BackendEndPoint* GetBackendEndPoint(int pool_id);
 extern ConnectionPoolEntry* GetConnectionPoolEntry(int pool_id);
 extern bool ReleasePooledConnection(ConnectionPoolEntry* pool_entry, IPC_Endpoint* ipc_endpoint, bool need_cleanup);
 
-
+extern BackendConnection* GetBackendConnectionByForBackendPID(int backend_pid, int *backend_node_id);
+extern BackendEndPoint* GetBackendEndPointForCancelPacket(CancelPacket* cp);
 
 // #define CONNECTION_SLOT(slot) ((GetChildBackendConnection())->slots[(slot)])
 // #define CONNECTION(slot) (CONNECTION_SLOT(slot)->connection)

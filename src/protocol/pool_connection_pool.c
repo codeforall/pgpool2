@@ -827,10 +827,10 @@ static bool ConnectBackendSlotSocket(int slot_no)
 	if (fd < 0)
 		return false;
 
-	// cp->sp = NULL;
 	cp->con = pool_open(fd, true);
 	cp->key = -1;
 	cp->pid = -1;
+	cp->con->pooled_backend_ref = &child_backend_connection.backend_end_point->conn_slots[slot_no];
 	return true;
 }
 
@@ -1333,6 +1333,8 @@ ImportPoolConnectionIntoChild(int pool_id, int *sockets)
 		current_backend_con->slots[slot_no].con = pool_open(sockets[i], true);
 		current_backend_con->slots[slot_no].con->auth_kind = backend_end_point->conn_slots[slot_no].auth_kind;
 		current_backend_con->slots[slot_no].con->pwd_size = backend_end_point->conn_slots[slot_no].pwd_size;
+		current_backend_con->slots[slot_no].con->pooled_backend_ref = &backend_end_point->conn_slots[slot_no];
+		
 		memcpy(current_backend_con->slots[slot_no].con->password, backend_end_point->conn_slots[slot_no].password, sizeof(backend_end_point->conn_slots[slot_no].password));
 		current_backend_con->slots[slot_no].con->passwordType =backend_end_point->conn_slots[slot_no].passwordType;
 		memcpy(current_backend_con->slots[slot_no].con->salt, backend_end_point->conn_slots[slot_no].salt, sizeof(backend_end_point->conn_slots[slot_no].salt));
@@ -1548,4 +1550,64 @@ get_sockets_array(BackendEndPoint*  backend_endpoint, int **sockets, int* num_so
 
 	*sockets = socks;
 	return *num_sockets;
+}
+
+/*
+ * locate and return the shared memory BackendConnection having the
+ * backend connection with the pid
+ * If the connection is found the *backend_node_id contains the backend node id
+ * of the backend node that has the connection
+ */
+BackendConnection *
+GetBackendConnectionByForBackendPID(int backend_pid, int *backend_node_id)
+{
+	int i;
+
+	for (i =0; i < max_pool_size; i++)
+	{
+		int con_slot;
+		if (ConnectionPool[i].status == POOL_ENTRY_EMPTY ||
+			ConnectionPool[i].endPoint.num_sockets <= 0)
+			continue;
+		for(con_slot = 0; con_slot < ConnectionPool[i].endPoint.num_sockets; con_slot++)
+		{
+			if (ConnectionPool[i].endPoint.conn_slots[con_slot].pid == backend_pid)
+			{
+				*backend_node_id = i;
+				return &ConnectionPool[i].endPoint.conn_slots[con_slot];
+			}
+		}
+	}
+	return NULL;
+}
+
+BackendEndPoint*
+GetBackendEndPointForCancelPacket(CancelPacket* cp)
+{
+	int i, con_slot;
+
+	for (i =0; i < max_pool_size; i++)
+	{
+		int con_slot;
+		if (ConnectionPool[i].status == POOL_ENTRY_EMPTY ||
+			ConnectionPool[i].endPoint.num_sockets <= 0)
+			continue;
+		for(con_slot = 0; con_slot < ConnectionPool[i].endPoint.num_sockets; con_slot++)
+		{
+			BackendConnection* c = &ConnectionPool[i].endPoint.conn_slots[con_slot];
+			ereport(DEBUG2,
+			(errmsg("processing cancel request"),
+				errdetail("connection info: database:%s user:%s pid:%d key:%d i:%d",
+						ConnectionPool[i].endPoint.database, ConnectionPool[i].endPoint.user,
+							ntohl(c->pid), ntohl(c->key), con_slot)));
+			if (c->pid == cp->pid && c->key == cp->key)
+			{
+				ereport(DEBUG1,
+						(errmsg("processing cancel request"),
+							errdetail("found pid:%d key:%d i:%d", ntohl(c->pid), ntohl(c->key), con_slot)));
+				return &ConnectionPool[i].endPoint;
+			}
+		}
+	}
+	return NULL;
 }

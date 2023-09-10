@@ -143,14 +143,13 @@ process_pg_terminate_backend_func(POOL_QUERY_CONTEXT * query_context)
 	 * locate pg_terminate_backend and get the pid argument, if
 	 * pg_terminate_backend is present in the query
 	 */
-	int			backend_pid = pool_get_terminate_backend_pid(query_context->parse_tree);
+	int	backend_pid = pool_get_terminate_backend_pid(query_context->parse_tree);
 
 	if (backend_pid > 0)
 	{
-		int			backend_node = 0;
-		ConnectionInfo *conn = pool_coninfo_backend_pid(backend_pid, &backend_node);
-
-		if (conn == NULL)
+		int	backend_node = -1;
+		BackendConnection* backend_connection = GetBackendConnectionByForBackendPID(backend_pid, &backend_node);
+		if (backend_connection == NULL)
 		{
 			ereport(LOG,
 					(errmsg("found the pg_terminate_backend request for backend pid:%d, but the backend connection does not belong to pgpool-II", backend_pid)));
@@ -162,17 +161,18 @@ process_pg_terminate_backend_func(POOL_QUERY_CONTEXT * query_context)
 			return false;
 		}
 		ereport(LOG,
-				(errmsg("found the pg_terminate_backend request for backend pid:%d on backend node:%d", backend_pid, backend_node),
+				(errmsg("found the pg_terminate_backend request for backend pid:%d", backend_pid),
 				 errdetail("setting the connection flag")));
 
-		pool_set_connection_will_be_terminated(conn);
+		pool_set_connection_will_be_terminated(backend_connection);
 
 		/*
 		 * It was the pg_terminate_backend call so send the query to
 		 * appropriate backend
 		 */
-		query_context->pg_terminate_backend_conn = conn;
-		pool_force_query_node_to_backend(query_context, backend_node);
+		query_context->pg_terminate_backend_conn = backend_connection;
+		if (backend_node >= 0)
+			pool_force_query_node_to_backend(query_context, backend_node);
 		return true;
 	}
 	return false;
