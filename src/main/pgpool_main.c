@@ -121,7 +121,7 @@ typedef struct User1SignalSlot
 
 #define PGPOOLMAXLITSENQUEUELENGTH 10000
 #define MAX_ONE_SHOT_KILLS 8
-
+#define SERVICE_CHILD_RASTER_SECONDS	5
 
 #define UNIXSOCK_PATH_BUFLEN sizeof(((struct sockaddr_un *) NULL)->sun_path)
 
@@ -204,6 +204,7 @@ static void exec_notice_pcp_child(FAILOVER_CONTEXT *failover_context);
 static void check_requests(void);
 static void print_signal_member(sigset_t *sig);
 static void service_child_processes(void);
+static bool handle_child_ipc_requests(void);
 static int select_victim_processes(int *process_info_idxs, int count);
 
 static struct sockaddr_un *un_addrs;	/* unix domain socket path */
@@ -297,6 +298,7 @@ PgpoolMain(bool discard_status, bool clear_memcache_oidmaps)
 	int			*pcp_inet_fds;
 	int			i;
 	char		unix_domain_socket_path[UNIXSOCK_PATH_BUFLEN + 1024];
+	struct timeval last_child_service_time = {0,0};
 
 	sigjmp_buf	local_sigjmp_buf;
 
@@ -651,18 +653,8 @@ PgpoolMain(bool discard_status, bool clear_memcache_oidmaps)
 	/* This is the main loop */
 	for (;;)
 	{
-		int		fd_max;
-		int		i;
-		int		select_ret;
-		struct timeval tv;
-		fd_set	rmask;
-
-
 		/* Check pending requests */
 		check_requests();
-#ifdef NOT_USED
-		CHECK_REQUEST;
-#endif
 		/*
 		 * check for child signals to ensure child startup before reporting
 		 * successful start.
@@ -699,71 +691,24 @@ PgpoolMain(bool discard_status, bool clear_memcache_oidmaps)
 					}
 				}
 			}
+			gettimeofday(&last_child_service_time, NULL);
 		}
 		first = false;
 
 		processState = SLEEPING;
-/* -------------- TESTING CODE ------------------- */
-		FD_ZERO(&rmask);
-		fd_max = 0;
-		for (i = 0; i < pool_config->num_init_children; i++)
+		if (handle_child_ipc_requests() == false)
 		{
-			if (ipc_endpoints[i].child_link > 0 && ipc_endpoints[i].child_pid > 0)
+			/* If signal was received by handle child IPC than skip child serive */
+			if (pool_config->process_management == PM_DYNAMIC)
 			{
-				FD_SET(ipc_endpoints[i].child_link, &rmask);
-				if (fd_max < ipc_endpoints[i].child_link)
-					fd_max = ipc_endpoints[i].child_link;
-			}
-		}
-
-		tv.tv_sec = 2;
-		tv.tv_usec = 0;
-
-		select_ret = select(fd_max + 1, &rmask, NULL, NULL, &tv);
-		if (select_ret > 0)
-		{
-			int reads = 0;
-			for (i = 0; i < pool_config->num_init_children; i++)
-			{
-				if (ipc_endpoints[i].child_link > 0 && ipc_endpoints[i].child_pid > 0)
+				struct timeval current_time;
+				gettimeofday(&current_time, NULL);
+				if (current_time.tv_sec - last_child_service_time.tv_sec >= SERVICE_CHILD_RASTER_SECONDS)
 				{
-					if (FD_ISSET(ipc_endpoints[i].child_link, &rmask))
-					{
-						ereport(LOG, (errmsg("IPC end point:%d from child:%d is ready",i, ipc_endpoints[i].child_pid)));
-
-						if (ProcessChildRequestOnMain(&ipc_endpoints[i]) == false)
-							ereport(LOG, (errmsg("failed to process child:%d request on main",ipc_endpoints[i].child_pid)));
-
-						reads++;
-					}
-				if (reads >= select_ret)
-					break;
+					service_child_processes();
+					gettimeofday(&last_child_service_time, NULL);
 				}
 			}
-		}
-		else
-			ereport(LOG,
-					(errmsg("select() timeout. reason: %s", strerror(errno))));
-/* ------------ TESTING CODE ------------ */
-		if (pool_config->process_management == PM_DYNAMIC)
-			service_child_processes();
-		sleep(1);
-		continue;
-
-		for (;;)
-		{
-			int			r;
-			struct timeval t = {2, 0};
-
-			POOL_SETMASK(&UnBlockSig);
-			r = pool_pause(&t);
-			POOL_SETMASK(&BlockSig);
-
-			if (pool_config->process_management == PM_DYNAMIC)
-				service_child_processes();
-
-			if (r > 0)
-				break;
 		}
 	}
 }
@@ -5266,4 +5211,76 @@ select_victim_processes(int *process_info_idxs, int count)
 				break;
 		}
 	return selected_count;
+}
+
+/* Returns true if signal was received while waiting */
+static bool
+handle_child_ipc_requests(void)
+{
+	int		fd_max;
+	int		i;
+	int		select_ret;
+	struct timeval tv;
+	fd_set	rmask;
+	bool	ret = false;
+
+	POOL_SETMASK(&UnBlockSig);
+
+	FD_ZERO(&rmask);
+	fd_max = pipe_fds[0];
+
+	/* Just in case we receive some emergency signal */
+	FD_SET(pipe_fds[0], &rmask);
+
+	for (i = 0; i < pool_config->num_init_children; i++)
+	{
+		if (ipc_endpoints[i].child_link > 0 && ipc_endpoints[i].child_pid > 0)
+		{
+			FD_SET(ipc_endpoints[i].child_link, &rmask);
+			if (fd_max < ipc_endpoints[i].child_link)
+				fd_max = ipc_endpoints[i].child_link;
+		}
+	}
+	tv.tv_sec = 2;
+	tv.tv_usec = 0;
+
+	select_ret = select(fd_max + 1, &rmask, NULL, NULL, &tv);
+
+	POOL_SETMASK(&BlockSig);
+
+	if (select_ret > 0)
+	{
+		int reads = 0;
+		if (FD_ISSET(pipe_fds[0], &rmask))
+		{
+			char		dummy;
+			ret = true;
+			if (read(pipe_fds[0], &dummy, 1) < 0)
+				ereport(WARNING,
+					(errmsg("handle_child_ipc_requests: read on pipe failed"),
+					 errdetail("%m")));
+			reads++;
+			if (reads >= select_ret)
+				return ret;
+		}
+		for (i = 0; i < pool_config->num_init_children; i++)
+		{
+			if (ipc_endpoints[i].child_link > 0 && ipc_endpoints[i].child_pid > 0)
+			{
+				if (FD_ISSET(ipc_endpoints[i].child_link, &rmask))
+				{
+					ereport(LOG,
+						(errmsg("IPC end point:%d from child:%d is ready",i, ipc_endpoints[i].child_pid)));
+
+					if (ProcessChildRequestOnMain(&ipc_endpoints[i]) == false)
+						ereport(LOG, (errmsg("failed to process child:%d request on main",ipc_endpoints[i].child_pid)));
+
+					reads++;
+				}
+			if (reads >= select_ret)
+				break;
+			}
+		}
+	}
+	return ret;
 }
