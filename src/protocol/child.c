@@ -178,9 +178,10 @@ do_child(int *fds, int ipc_fd)
 	signal(SIGUSR2, wakeup_handler);
 	signal(SIGPIPE, SIG_IGN);
 
+	parent_link_fd = ipc_fd;
+
 	on_system_exit(child_will_go_down, (Datum) NULL);
 
-	parent_link_fd = ipc_fd;
 
 	int		   *walk;
 #ifdef NONE_BLOCK
@@ -1318,6 +1319,9 @@ child_will_go_down(int code, Datum arg)
 				(errmsg("child_exit: called from invalid process. ignored.")));
 		return;
 	}
+	/* Close IPC Con */
+	if (parent_link_fd != -1)
+		close(parent_link_fd);
 
 	/* count down global connection counter */
 	if (accepted)
