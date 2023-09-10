@@ -29,7 +29,7 @@
 //#include "pool.h"
 #include "pcp/libpcp_ext.h"
 #include "utils/pool_signal.h"
-
+#include "protocol/pool_connection_pool.h"
 
 /*
  * Child process context:
@@ -68,9 +68,8 @@ extern ConnectionInfo * pool_coninfo(int child, int connection_pool, int backend
 extern void pool_coninfo_set_frontend_connected(int proc_id, int pool_index);
 extern void pool_coninfo_unset_frontend_connected(int proc_id, int pool_index);
 
-extern ConnectionInfo * pool_coninfo_backend_pid(int backend_pid, int *backend_node_id);
-extern void pool_set_connection_will_be_terminated(ConnectionInfo * connInfo);
-extern void pool_unset_connection_will_be_terminated(ConnectionInfo * connInfo);
+extern void pool_set_connection_will_be_terminated(BackendConnection * backend_connection);
+extern void pool_unset_connection_will_be_terminated(BackendConnection * backend_connection);
 
 extern void pool_alarm(pool_sighandler_t handler, unsigned int second);
 extern void pool_undo_alarm(void);

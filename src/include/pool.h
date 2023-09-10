@@ -179,7 +179,45 @@ typedef struct CancelPacket
  */
 typedef struct HbaLine HbaLine;
 
+typedef struct BackendConnection
+{
+	ConnectionInfo conn_info;
+	int			pid;			/* backend process id */
+	int			key;			/* cancel key */
+	int			counter;		/* used counter */
+	time_t		create_time;	/* connection creation time */
+	int 		socket;
+    bool        connected;
 
+	/*
+	 * following are used to remember when re-use the authenticated connection
+	 */
+	int			auth_kind;		/* 3: clear text password, 4: crypt password,
+								 * 5: md5 password */
+	int			pwd_size;		/* password (sent back from frontend) size in
+								 * host order */
+	char		password[MAX_PASSWORD_SIZE + 1];	/* password (sent back
+													 * from frontend) */
+	char		salt[4];		/* password salt */
+	PasswordType passwordType;
+
+	volatile bool swallow_termination;
+}BackendConnection;
+
+typedef struct
+{
+	char		database[SM_DATABASE];	/* Database name */
+	char		user[SM_USER];	/* User name */
+    int         load_balancing_node;
+	char        startup_packet_data[MAX_STARTUP_PACKET_LENGTH];			/* startup packet info */
+	StartupPacket sp;			/* startup packet info */
+	int			key;			/* cancel key */
+    int         auth_kind;
+    int			num_sockets;
+    int         backend_ids[MAX_NUM_BACKENDS];
+	BackendConnection conn_slots[MAX_NUM_BACKENDS];
+    
+}			BackendEndPoint;
 /*
  * stream connection structure
  */
@@ -265,8 +303,7 @@ typedef struct
 	int			remote_hostname_resolv;
 	bool		frontend_authenticated;
 	PasswordMapping *passwordMapping;
-	ConnectionInfo *con_info;	/* shared memory coninfo used for handling the
-								 * query containing pg_terminate_backend */
+	BackendConnection *pooled_backend_ref; /* points to shared mem */
 }			POOL_CONNECTION;
 
 typedef enum POOL_ENTRY_STATUS
@@ -277,45 +314,6 @@ typedef enum POOL_ENTRY_STATUS
 	POOL_ENTRY_RESERVED
 }			POOL_ENTRY_STATUS;
 
-typedef struct BackendConnection
-{
-	ConnectionInfo conn_info;
-	int			pid;			/* backend process id */
-	int			key;			/* cancel key */
-	int			counter;		/* used counter */
-	time_t		create_time;	/* connection creation time */
-	int 		socket;
-    bool        connected;
-
-	/*
-	 * following are used to remember when re-use the authenticated connection
-	 */
-	int			auth_kind;		/* 3: clear text password, 4: crypt password,
-								 * 5: md5 password */
-	int			pwd_size;		/* password (sent back from frontend) size in
-								 * host order */
-	char		password[MAX_PASSWORD_SIZE + 1];	/* password (sent back
-													 * from frontend) */
-	char		salt[4];		/* password salt */
-	PasswordType passwordType;
-
-	volatile bool swallow_termination;
-}BackendConnection;
-
-typedef struct
-{
-	char		database[SM_DATABASE];	/* Database name */
-	char		user[SM_USER];	/* User name */
-    int         load_balancing_node;
-	char        startup_packet_data[MAX_STARTUP_PACKET_LENGTH];			/* startup packet info */
-	StartupPacket sp;			/* startup packet info */
-	int			key;			/* cancel key */
-    int         auth_kind;
-    int			num_sockets;
-    int         backend_ids[MAX_NUM_BACKENDS];
-	BackendConnection conn_slots[MAX_NUM_BACKENDS];
-    
-}			BackendEndPoint;
 
 typedef struct
 {

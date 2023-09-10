@@ -920,13 +920,10 @@ cancel_request(CancelPacket * sp)
 {
 	int			len;
 	int			fd;
+	BackendEndPoint* backend_end_point;
 	POOL_CONNECTION *con;
-	int			i,
-				j,
-				k;
-	ConnectionInfo *c = NULL;
+	int			i;
 	CancelPacket cp;
-	bool		found = false;
 
 	if (pool_config->log_client_messages)
 		ereport(LOG,
@@ -935,41 +932,16 @@ cancel_request(CancelPacket * sp)
 	ereport(DEBUG1,
 			(errmsg("Cancel request received")));
 
-	/* look for cancel key from shmem info */
-	for (i = 0; i < pool_config->num_init_children; i++)
-	{
-		for (j = 0; j < pool_config->max_pool; j++)
-		{
-			for (k = 0; k < NUM_BACKENDS; k++)
-			{
-				c = pool_coninfo(i, j, k);
-				ereport(DEBUG2,
-						(errmsg("processing cancel request"),
-						 errdetail("connection info: address:%p database:%s user:%s pid:%d key:%d i:%d",
-								   c, c->database, c->user, ntohl(c->pid), ntohl(c->key), i)));
-				if (c->pid == sp->pid && c->key == sp->key)
-				{
-					ereport(DEBUG1,
-							(errmsg("processing cancel request"),
-							 errdetail("found pid:%d key:%d i:%d", ntohl(c->pid), ntohl(c->key), i)));
-
-					c = pool_coninfo(i, j, 0);
-					found = true;
-					goto found;
-				}
-			}
-		}
-	}
-
-found:
-	if (!found)
+	backend_end_point = GetBackendEndPointForCancelPacket(sp);
+	if (backend_end_point == NULL)
 	{
 		ereport(LOG,
-				(errmsg("invalid cancel key: pid:%d key:%d", ntohl(sp->pid), ntohl(sp->key))));
-		return;					/* invalid key */
+				(errmsg("invalid cancel request received"),
+				 errdetail("invalid pid: %d key: %d", ntohl(sp->pid), ntohl(sp->key))));
+		return;
 	}
 
-	for (i = 0; i < NUM_BACKENDS; i++, c++)
+	for (i = 0; i < NUM_BACKENDS; i++)
 	{
 		if (!VALID_BACKEND(i))
 			continue;
@@ -996,8 +968,8 @@ found:
 		pool_write(con, &len, sizeof(len));
 
 		cp.protoVersion = sp->protoVersion;
-		cp.pid = c->pid;
-		cp.key = c->key;
+		cp.pid = backend_end_point->conn_slots[i].pid;
+		cp.key = backend_end_point->conn_slots[i].key;
 
 		ereport(LOG,
 				(errmsg("forwarding cancel request to backend"),

@@ -5037,7 +5037,7 @@ SELECT_RETRY:
 						 * check if the pg_terminate_backend was issued on
 						 * this connection
 						 */
-						if (CONNECTION(backend, i)->con_info->swallow_termination == 1)
+						if(backend->backend_end_point->conn_slots[i].swallow_termination)
 						{
 							ereport(FATAL,
 									(errmsg("connection to postmaster on DB node %d was lost due to pg_terminate_backend", i),
@@ -5060,7 +5060,7 @@ SELECT_RETRY:
 						was_error = 1;
 						if (!VALID_BACKEND(i))
 							break;
-						if (CONNECTION(backend, i)->con_info->swallow_termination == 1)
+						if (backend->backend_end_point->conn_slots[i].swallow_termination)
 						{
 							ereport(FATAL,
 									(errmsg("connection to postmaster on DB node %d was lost due to pg_terminate_backend", i),
