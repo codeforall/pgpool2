@@ -1046,7 +1046,6 @@ void update_pooled_connection_count(void)
 
 
 /* Global Connection Pool owned by Main process and lives in shared memory */
-int max_pool_size = 2; //pool_config->max_pool;
 ConnectionPoolEntry	*ConnectionPool = NULL; /* Global connection pool */
 static int get_sockets_array(BackendEndPoint*  backend_endpoint, int **sockets, int* num_sockets, bool pooled_socks);
 static void import_startup_packet_into_child(StartupPacket* sp, char* startup_packet_data);
@@ -1057,7 +1056,7 @@ static void register_new_lease(int pool_id, LEASE_TYPES	lease_type, IPC_Endpoint
 size_t
 get_global_connection_pool_shared_mem_size(void)
 {
-	return sizeof(ConnectionPoolEntry) * max_pool_size;
+	return sizeof(ConnectionPoolEntry) * pool_config->max_pool_size;
 }
 
 void init_global_connection_pool(void)
@@ -1068,7 +1067,7 @@ void init_global_connection_pool(void)
 BackendEndPoint*
 GetBackendEndPoint(int pool_id)
 {
-	if (pool_id < 0 || pool_id >= max_pool_size)
+	if (pool_id < 0 || pool_id >= pool_config->max_pool_size)
 		return NULL;
 	return &ConnectionPool[pool_id].endPoint;
 }
@@ -1076,7 +1075,7 @@ GetBackendEndPoint(int pool_id)
 ConnectionPoolEntry*
 GetConnectionPoolEntry(int pool_id)
 {
-	if (pool_id < 0 || pool_id >= max_pool_size)
+	if (pool_id < 0 || pool_id >= pool_config->max_pool_size)
 		return NULL;
 	return &ConnectionPool[pool_id];
 }
@@ -1372,7 +1371,7 @@ GetPooledConnectionForLending(char *user, char *database, int protoMajor, LEASE_
 	int unused_pool_slot = -1;
 	ereport(LOG,
 		(errmsg("Finding for user:%s database:%s protoMajor:%d", user, database, protoMajor)));
-	for (i =0; i < max_pool_size; i++)
+	for (i =0; i < pool_config->max_pool_size; i++)
 	{
 		if (ConnectionPool[i].status == POOL_ENTRY_READY &&
 			ConnectionPool[i].borrower_pid <= 0 &&
@@ -1535,7 +1534,7 @@ GetBackendConnectionByForBackendPID(int backend_pid, int *backend_node_id)
 {
 	int i;
 
-	for (i =0; i < max_pool_size; i++)
+	for (i =0; i < pool_config->max_pool_size; i++)
 	{
 		int con_slot;
 		if (ConnectionPool[i].status == POOL_ENTRY_EMPTY ||
@@ -1558,7 +1557,7 @@ GetBackendEndPointForCancelPacket(CancelPacket* cp)
 {
 	int i, con_slot;
 
-	for (i =0; i < max_pool_size; i++)
+	for (i =0; i < pool_config->max_pool_size; i++)
 	{
 		int con_slot;
 		if (ConnectionPool[i].status == POOL_ENTRY_EMPTY ||

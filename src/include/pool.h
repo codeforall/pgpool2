@@ -216,6 +216,7 @@ typedef struct
     int			num_sockets;
     int         backend_ids[MAX_NUM_BACKENDS];
 	BackendConnection conn_slots[MAX_NUM_BACKENDS];
+	BACKEND_STATUS backend_status[MAX_NUM_BACKENDS];	/* Backend status of each node*/
     
 }			BackendEndPoint;
 /*

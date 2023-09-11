@@ -2068,6 +2068,17 @@ static struct config_int ConfigureNamesInt[] =
 	},
 
 	{
+		{"max_pool_size", CFGCXT_INIT, CONNECTION_POOL_CONFIG,
+			"Maximum number of connection pools per child process.",
+			CONFIG_VAR_TYPE_INT, false, 0
+		},
+		&g_pool_config.max_pool_size,
+		32,
+		0, INT_MAX,
+		NULL, NULL, NULL
+	},
+
+	{
 		{"sr_check_period", CFGCXT_RELOAD, STREAMING_REPLICATION_CONFIG,
 			"Time interval in seconds between the streaming replication delay checks.",
 			CONFIG_VAR_TYPE_INT, false, GUC_UNIT_S
