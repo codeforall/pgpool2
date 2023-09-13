@@ -418,6 +418,9 @@ pool_do_auth(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * cp)
 			(errmsg("authentication backend"),
 			 errdetail("auth kind:%d", authkind)));
 	/* trust? */
+
+	SaveAuthKindForBackendConnection(authkind);
+
 	if (authkind == AUTH_REQ_OK)
 	{
 		int			msglen;
@@ -432,7 +435,6 @@ pool_do_auth(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * cp)
 
 		msglen = htonl(0);
 		pool_write_and_flush(frontend, &msglen, sizeof(msglen));
-		MAIN(cp)->auth_kind = AUTH_REQ_OK;
 	}
 
 	/* clear text password authentication? */
@@ -805,10 +807,9 @@ pool_do_auth(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * cp)
 int
 pool_do_reauth(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * cp)
 {
-	int			protoMajor;
+	int			protoMajor = MAJOR(cp);
+	int			authkind = GetAuthKindForCurrentPoolBackendConnection();
 	int			msglen;
-
-	protoMajor = MAJOR(cp);
 
 	/*
 	 * if hba is enabled we would already have passed authentication
@@ -816,7 +817,7 @@ pool_do_reauth(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * cp)
 	if (!frontend->frontend_authenticated)
 	{
 		
-		switch (MAIN(cp)->auth_kind)
+		switch (authkind)
 		{
 			case AUTH_REQ_OK:
 				/* trust */
@@ -843,7 +844,7 @@ pool_do_reauth(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * cp)
 			default:
 				ereport(ERROR,
 						(errmsg("authentication failed"),
-						 errdetail("unknown authentication request code %d", MAIN(cp)->auth_kind)));
+						 errdetail("unknown authentication request code %d", authkind)));
 		}
 	}
 
@@ -1072,16 +1073,26 @@ do_clear_text_password(POOL_CONNECTION * backend, POOL_CONNECTION * frontend, in
 	/* connection reusing? */
 	if (reauth)
 	{
-		if (size != backend->pwd_size)
+		BackendEndPoint* backend_endpoint = GetChildBorrowedBackendEndPoint();
+		if (!backend_endpoint || backend_endpoint->pwd_size <= 0)
+		{
 			ereport(ERROR,
 					(errmsg("clear text password authentication failed"),
-					 errdetail("password size does not match")));
+					 errdetail("password not found in the pooled connection")));
+		}
+		else
+		{
+			if (size != backend_endpoint->pwd_size)
+				ereport(ERROR,
+						(errmsg("clear text password authentication failed"),
+						errdetail("password size does not match")));
 
-		if (memcmp(pwd, backend->password, backend->pwd_size) != 0)
-			ereport(ERROR,
-					(errmsg("clear text password authentication failed"),
-					 errdetail("password does not match")));
+			if (memcmp(pwd, backend_endpoint->password, backend_endpoint->pwd_size) != 0)
+				ereport(ERROR,
+						(errmsg("clear text password authentication failed"),
+						errdetail("password does not match")));
 
+		}
 		return 0;
 	}
 
@@ -1093,12 +1104,9 @@ do_clear_text_password(POOL_CONNECTION * backend, POOL_CONNECTION * frontend, in
 		if (IS_MAIN_NODE_ID(backend->db_node_id))
 		{
 			send_auth_ok(frontend, protoMajor);
+			StorePasswordInformation( pwd, size, PASSWORD_TYPE_PLAINTEXT);
 		}
 
-		backend->auth_kind = AUTH_REQ_PASSWORD;
-		backend->pwd_size = size;
-		memcpy(backend->password, pwd, backend->pwd_size);
-		backend->passwordType = PASSWORD_TYPE_PLAINTEXT;
 	}
 	return kind;
 }
@@ -1109,7 +1117,7 @@ do_clear_text_password(POOL_CONNECTION * backend, POOL_CONNECTION * frontend, in
 static int
 do_crypt(POOL_CONNECTION * backend, POOL_CONNECTION * frontend, int reauth, int protoMajor)
 {
-	char		salt[2];
+	char		salt[2] = {0,0};
 	static int	size;
 	static char password[MAX_PASSWORD_SIZE];
 	char		response;
@@ -1121,9 +1129,9 @@ do_crypt(POOL_CONNECTION * backend, POOL_CONNECTION * frontend, int reauth, int 
 		/* read salt */
 		pool_read(backend, salt, sizeof(salt));
 	}
-	else
+	else if (backend->pooled_backend_ref)
 	{
-		memcpy(salt, backend->salt, sizeof(salt));
+		memcpy(salt, backend->pooled_backend_ref->salt, sizeof(salt));
 	}
 
 	/* main? */
@@ -1172,21 +1180,31 @@ do_crypt(POOL_CONNECTION * backend, POOL_CONNECTION * frontend, int reauth, int 
 	/* connection reusing? */
 	if (reauth)
 	{
-		ereport(DEBUG1,
-				(errmsg("performing crypt authentication"),
-				 errdetail("size: %d saved_size: %d", (ntohl(size) - 4), backend->pwd_size)));
-
-		if ((ntohl(size) - 4) != backend->pwd_size)
+		BackendEndPoint* backend_endpoint = GetChildBorrowedBackendEndPoint();
+		if (!backend_endpoint || backend_endpoint->pwd_size <= 0)
+		{
 			ereport(ERROR,
 					(errmsg("crypt authentication failed"),
-					 errdetail("password size does not match")));
+					 errdetail("password not found in the pooled connection")));
+		}
+		else
+		{
+
+			ereport(DEBUG1,
+					(errmsg("performing crypt authentication"),
+					errdetail("size: %d saved_size: %d", (ntohl(size) - 4), backend_endpoint->pwd_size)));
+
+			if ((ntohl(size) - 4) != backend_endpoint->pwd_size)
+				ereport(ERROR,
+						(errmsg("crypt authentication failed"),
+						errdetail("password size does not match")));
 
 
-		if (memcmp(password, backend->password, backend->pwd_size) != 0)
-			ereport(ERROR,
-					(errmsg("crypt authentication failed"),
-					 errdetail("password does not match")));
-
+			if (memcmp(password, backend_endpoint->password, backend_endpoint->pwd_size) != 0)
+				ereport(ERROR,
+						(errmsg("crypt authentication failed"),
+						errdetail("password does not match")));
+		}
 		return 0;
 	}
 
@@ -1245,11 +1263,10 @@ do_crypt(POOL_CONNECTION * backend, POOL_CONNECTION * frontend, int reauth, int 
 
 		msglen = htonl(0);
 		pool_write_and_flush(frontend, &msglen, sizeof(msglen));
+		StorePasswordInformation(password, (ntohl(size) - 4), PASSWORD_TYPE_UNKNOWN);
+		if (backend->pooled_backend_ref)
+			memcpy(backend->pooled_backend_ref->salt, salt, sizeof(salt));
 
-		backend->auth_kind = 4;
-		backend->pwd_size = ntohl(size) - 4;
-		memcpy(backend->password, password, backend->pwd_size);
-		memcpy(backend->salt, salt, sizeof(salt));
 	}
 	return kind;
 }
@@ -1639,20 +1656,30 @@ do_md5_single_backend(POOL_CONNECTION * backend, POOL_CONNECTION * frontend, int
 	/* connection reusing? compare it with saved password */
 	if (reauth)
 	{
-		if (backend->passwordType != PASSWORD_TYPE_MD5)
+		BackendEndPoint* backend_endpoint = GetChildBorrowedBackendEndPoint();
+		if (!backend_endpoint || backend_endpoint->pwd_size <= 0)
+		{
 			ereport(ERROR,
 					(errmsg("md5 authentication failed"),
-					 errdetail("invalid password type")));
+					 errdetail("password not found in the pooled connection")));
+		}
+		else
+		{
+			if (backend_endpoint->passwordType != PASSWORD_TYPE_MD5)
+				ereport(ERROR,
+						(errmsg("md5 authentication failed"),
+						errdetail("invalid password type")));
 
-		if (size != backend->pwd_size)
-			ereport(ERROR,
-					(errmsg("md5 authentication failed"),
-					 errdetail("password does not match")));
+			if (size != backend_endpoint->pwd_size)
+				ereport(ERROR,
+						(errmsg("md5 authentication failed"),
+						errdetail("password does not match")));
 
-		if (memcmp(password, backend->password, backend->pwd_size) != 0)
-			ereport(ERROR,
-					(errmsg("md5 authentication failed"),
-					 errdetail("password does not match")));
+			if (memcmp(password, backend_endpoint->password, backend_endpoint->pwd_size) != 0)
+				ereport(ERROR,
+						(errmsg("md5 authentication failed"),
+						errdetail("password does not match")));
+		}
 		return 0;
 	}
 	else
@@ -1668,11 +1695,9 @@ do_md5_single_backend(POOL_CONNECTION * backend, POOL_CONNECTION * frontend, int
 		if (kind == AUTH_REQ_OK)
 		{
 			send_auth_ok(frontend, protoMajor);
-			backend->passwordType = PASSWORD_TYPE_MD5;
-			backend->auth_kind = AUTH_REQ_MD5;
-			backend->pwd_size = size;
-			memcpy(backend->password, password, backend->pwd_size);
-			memcpy(backend->salt, salt, sizeof(salt));
+			StorePasswordInformation(password,size, PASSWORD_TYPE_MD5);
+			if (backend->pooled_backend_ref)
+				memcpy(salt, backend->pooled_backend_ref->salt, sizeof(salt));
 		}
 	}
 	return kind;
@@ -1698,11 +1723,15 @@ get_auth_password(POOL_CONNECTION * backend, POOL_CONNECTION * frontend, int rea
 			*passwordType = frontend->passwordType;
 			return true;
 		}
-		else if (reauth && backend && backend->pwd_size > 0)
+		else if (reauth)
 		{
-			*password = backend->password;
-			*passwordType = backend->passwordType;
-			return true;
+			BackendEndPoint* backend_endpoint = GetChildBorrowedBackendEndPoint();
+			if (backend_endpoint && backend_endpoint->pwd_size > 0)
+			{
+				*password = backend_endpoint->password;
+				*passwordType = backend_endpoint->passwordType;
+				return true;
+			}
 		}
 	}
 	else
@@ -1789,10 +1818,7 @@ do_md5(POOL_CONNECTION * backend, POOL_CONNECTION * frontend, int reauth, int pr
 			ereport(DEBUG2,
 					(errmsg("MD5 authentication using the password from frontend")));
 			/* save this password in backend for the re-auth */
-			backend->pwd_size = frontend->pwd_size;
-			memcpy(backend->password, frontend->password, frontend->pwd_size);
-			backend->password[backend->pwd_size] = 0;	/* null terminate */
-			backend->passwordType = frontend->passwordType;
+			StorePasswordInformation(frontend->password, frontend->pwd_size, frontend->passwordType);
 		}
 		else
 		{
@@ -2104,7 +2130,7 @@ do_SCRAM(POOL_CONNECTION * frontend, POOL_CONNECTION * backend, int protoMajor, 
 	if (frontend && IS_MAIN_NODE_ID(backend->db_node_id) && frontend->frontend_authenticated == false)
 	{
 		/*
-		 * If frontend is not authenticated and do it it first. but if we have
+		 * If frontend is not authenticated and do it first. but if we have
 		 * already received the password from frontend using the clear text
 		 * auth, we may not need to authenticate it
 		 */
@@ -2116,10 +2142,7 @@ do_SCRAM(POOL_CONNECTION * frontend, POOL_CONNECTION * backend, int protoMajor, 
 			ereport(DEBUG2,
 					(errmsg("SCRAM authentication using the password from frontend")));
 			/* save this password in backend for the re-auth */
-			backend->pwd_size = frontend->pwd_size;
-			memcpy(backend->password, frontend->password, frontend->pwd_size);
-			backend->password[backend->pwd_size] = 0;	/* null terminate */
-			backend->passwordType = frontend->passwordType;
+			StorePasswordInformation( frontend->password, frontend->pwd_size, frontend->passwordType);
 		}
 		else
 		{

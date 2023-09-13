@@ -5266,7 +5266,7 @@ handle_child_ipc_requests(void)
 			{
 				if (FD_ISSET(ipc_endpoints[i].child_link, &rmask))
 				{
-					ereport(LOG,
+					ereport(DEBUG2,
 						(errmsg("IPC end point:%d from child:%d is ready",i, ipc_endpoints[i].child_pid)));
 
 					if (ProcessChildRequestOnMain(&ipc_endpoints[i]) == false)

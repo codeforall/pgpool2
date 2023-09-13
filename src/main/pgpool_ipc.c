@@ -55,6 +55,7 @@
 
 #define IPC_BORROW_CONNECTION_REQUEST    'B'
 #define IPC_RELEASE_CONNECTION_REQUEST   'R'
+#define IPC_DISCARD_CONNECTION_REQUEST   'D'
 #define IPC_PUSH_CONNECTION_TO_POOL      'P'
 
 #define MAX_WAIT_FOR_PARENT_RESPONSE 5 /* TODO should it be configurable ?*/
@@ -63,6 +64,8 @@ static bool receive_sockets(int fd, int count, int *sockets);
 static bool process_borrow__connection_request(IPC_Endpoint* ipc_endpoint);
 
 static bool process_release_connection_request(IPC_Endpoint* ipc_endpoint);
+static bool process_discard_connection_request(IPC_Endpoint* ipc_endpoint);
+
 static bool  process_push_connection_to_pool(IPC_Endpoint* ipc_endpoint);
 
 /*
@@ -84,7 +87,7 @@ BorrowBackendConnection(int	parent_link, char* database, char* user, int major, 
     pro_info->minor = minor;
     /* Send the message to main process */
 
-    ereport(LOG,
+    ereport(DEBUG2,
             (errmsg("Asking pooled connection for:%s :%s ", pro_info->database, pro_info->user)));
 
     if (write(parent_link, &type, 1) != 1)
@@ -147,7 +150,7 @@ ProcessChildRequestOnMain(IPC_Endpoint* ipc_endpoint)
 	if (processType != PT_MAIN)
 		return false;
 
-    ereport(LOG,
+    ereport(DEBUG2,
             (errmsg("New request received from from child:%d", ipc_endpoint->child_pid)));
 
     if (socket_read(ipc_endpoint->child_link, &type, 1, MAX_WAIT_FOR_PARENT_RESPONSE) != 1)
@@ -156,12 +159,14 @@ ProcessChildRequestOnMain(IPC_Endpoint* ipc_endpoint)
                 (errmsg("failed to read IPC packet type:%c from child:%d", type, ipc_endpoint->child_pid)));
         return false;
     }
-    ereport(LOG,
+    ereport(DEBUG2,
             (errmsg("Processing request type:%c from child:%d", type, ipc_endpoint->child_pid)));
     if (type == IPC_BORROW_CONNECTION_REQUEST)
         return process_borrow__connection_request(ipc_endpoint);
     else if (type == IPC_RELEASE_CONNECTION_REQUEST)
         return process_release_connection_request(ipc_endpoint);
+    else if (type == IPC_DISCARD_CONNECTION_REQUEST)
+        return process_discard_connection_request(ipc_endpoint);
     else if (type == IPC_PUSH_CONNECTION_TO_POOL)
         return process_push_connection_to_pool(ipc_endpoint);
     else
@@ -224,9 +229,13 @@ SendBackendSocktesToMainPool(int parent_link, int count, int *sockets)
 }
 
 bool
-ReleasePooledConnectionFromChild(int parent_link)
+ReleasePooledConnectionFromChild(int parent_link, bool discard)
 {
-    char type = IPC_RELEASE_CONNECTION_REQUEST;
+    char type = discard?IPC_DISCARD_CONNECTION_REQUEST : IPC_RELEASE_CONNECTION_REQUEST;
+
+    if (processType != PT_CHILD)
+        return false;
+
     if (write(parent_link, &type, 1) != 1)
     {
         ereport(WARNING,
@@ -260,10 +269,40 @@ receive_sockets(int fd, int count, int *sockets)
     if (ancil_recv_fds(fd, sockets, count) == -1)
     {
         ereport(WARNING,
-                (errmsg("ancil_recv_fds failed")));
+                (errmsg("ancil_recv_fds failed"),
+                errdetail("%m")));
         return false;
     }
     return true;
+}
+
+static bool
+process_discard_connection_request(IPC_Endpoint* ipc_endpoint)
+{
+    ProcessInfo *pro_info = NULL;
+    ConnectionPoolEntry* pool_entry;
+
+    if (processType != PT_MAIN)
+        return false;
+
+    ereport(DEBUG2,
+        (errmsg("Processing Discard connection to pool from child:%d", ipc_endpoint->child_pid)));
+
+    pro_info = pool_get_process_info_from_IPC_Endpoint(ipc_endpoint);
+    if (!pro_info)
+    {
+        ereport(WARNING,
+                (errmsg("failed to get process info for child:%d", ipc_endpoint->child_pid)));
+        return false;
+    }
+    pool_entry = GetConnectionPoolEntry(pro_info->pool_id);
+    if (!pool_entry)
+    {
+        ereport(WARNING,
+                (errmsg("failed to get pool entry for pool_id:%d", pro_info->pool_id)));
+        return false;
+    }
+    return ReleasePooledConnection(pool_entry, ipc_endpoint, false, true);
 }
 
 static bool
@@ -271,7 +310,6 @@ process_release_connection_request(IPC_Endpoint* ipc_endpoint)
 {
     ProcessInfo *pro_info = NULL;
     ConnectionPoolEntry* pool_entry;
-    int		sockets[MAX_NUM_BACKENDS];
 
     if (processType != PT_MAIN)
         return false;
@@ -293,7 +331,7 @@ process_release_connection_request(IPC_Endpoint* ipc_endpoint)
                 (errmsg("failed to get pool entry for pool_id:%d", pro_info->pool_id)));
         return false;
     }
-    return ReleasePooledConnection(pool_entry, ipc_endpoint, false);
+    return ReleasePooledConnection(pool_entry, ipc_endpoint, false, false);
 }
 
 static bool
@@ -305,6 +343,7 @@ process_push_connection_to_pool(IPC_Endpoint* ipc_endpoint)
 
     if (processType != PT_MAIN)
         return false;
+
     ereport(LOG,
             (errmsg("Processing push connection to pool from child:%d", ipc_endpoint->child_pid)));
 
@@ -322,23 +361,34 @@ process_push_connection_to_pool(IPC_Endpoint* ipc_endpoint)
                 (errmsg("failed to get pool entry for pool_id:%d", pro_info->pool_id)));
         return false;
     }
+
+    ereport(DEBUG2,
+            (errmsg("Expecting to receive %d socktes for pool_id:%d",pool_entry->endPoint.num_sockets, pro_info->pool_id)));
+
     if (receive_sockets(ipc_endpoint->child_link, pool_entry->endPoint.num_sockets, sockets) == true)
     {
         bool ret ;
         ereport(LOG,
                 (errmsg("received %d sockets for pool_id:%d from child:%d", pool_entry->endPoint.num_sockets, pro_info->pool_id,ipc_endpoint->child_pid)));
-        ret = InstallSocketsInConnectionPool(pro_info->pool_id, sockets);
-        if (!ret)
-        ereport(LOG,
+        ret = InstallSocketsInConnectionPool(pool_entry, sockets);
+        if (ret)
+            pool_entry->status = POOL_ENTRY_CONNECTED;
+        else
+            ereport(LOG,
                 (errmsg("InstallSocketsInConnectionPool for pool_id:%d from child:%d failed", pro_info->pool_id,ipc_endpoint->child_pid)));
-        ret = ReleasePooledConnection(pool_entry, ipc_endpoint, ret);
+
+        ret = ReleasePooledConnection(pool_entry, ipc_endpoint, !ret, false);
         if (!ret)
         ereport(LOG,
                 (errmsg("ReleasePooledConnection for pool_id:%d from child:%d failed", pro_info->pool_id,ipc_endpoint->child_pid)));
+        return ret;
     }
     else
+    {
         ereport(WARNING,
                 (errmsg("failed to receive %d sockets for pool_id:%d from child:%d", pool_entry->endPoint.num_sockets, pro_info->pool_id,ipc_endpoint->child_pid)));
+        ReleasePooledConnection(pool_entry, ipc_endpoint, true, true);
+    }
 
     return false;
 }

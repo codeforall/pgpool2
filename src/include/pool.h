@@ -189,17 +189,7 @@ typedef struct BackendConnection
 	int 		socket;
     bool        connected;
 
-	/*
-	 * following are used to remember when re-use the authenticated connection
-	 */
-	int			auth_kind;		/* 3: clear text password, 4: crypt password,
-								 * 5: md5 password */
-	int			pwd_size;		/* password (sent back from frontend) size in
-								 * host order */
-	char		password[MAX_PASSWORD_SIZE + 1];	/* password (sent back
-													 * from frontend) */
 	char		salt[4];		/* password salt */
-	PasswordType passwordType;
 
 	volatile bool swallow_termination;
 }BackendConnection;
@@ -212,7 +202,17 @@ typedef struct
 	char        startup_packet_data[MAX_STARTUP_PACKET_LENGTH];			/* startup packet info */
 	StartupPacket sp;			/* startup packet info */
 	int			key;			/* cancel key */
-    int         auth_kind;
+	/*
+	 * following are used to remember when re-use the authenticated connection
+	 */
+	int			auth_kind;		/* 3: clear text password, 4: crypt password,
+								 * 5: md5 password */
+	int			pwd_size;		/* password (sent back from frontend) size in
+								 * host order */
+	char		password[MAX_PASSWORD_SIZE + 1];	/* password (sent back
+													 * from frontend) */
+	PasswordType passwordType;
+
     int			num_sockets;
     int         backend_ids[MAX_NUM_BACKENDS];
 	BackendConnection conn_slots[MAX_NUM_BACKENDS];
@@ -310,9 +310,7 @@ typedef struct
 typedef enum POOL_ENTRY_STATUS
 {
 	POOL_ENTRY_EMPTY = 0,
-	POOL_ENTRY_LEASED,
-	POOL_ENTRY_READY,
-	POOL_ENTRY_RESERVED
+	POOL_ENTRY_CONNECTED
 }			POOL_ENTRY_STATUS;
 
 
@@ -338,6 +336,15 @@ typedef enum LEASE_TYPES
 	LEASE_TYPE_LEASE_FAILED
 } LEASE_TYPES;
 
+typedef enum CHILD_CONNECTION_SLOT_STATES
+{
+	CONNECTION_SLOT_EMPTY = 0,
+	CONNECTION_SLOT_LOADED_FROM_BACKEND,
+	CONNECTION_SLOT_SOCKET_CONNECTION_ERROR,
+	CONNECTION_SLOT_SOCKET_CONNECTION_ONLY,
+	CONNECTION_SLOT_AUTHENTICATION_OK,
+} CHILD_CONNECTION_SLOT_STATES;
+
 typedef struct ChildBackendConnectionSlot
 {
 	int			pid;			/* backend pid */
@@ -345,6 +352,7 @@ typedef struct ChildBackendConnectionSlot
 	time_t		closetime;		/* absolute time in second when the connection
 								 * closed if 0, that means the connection is
 								 * under use. */
+	CHILD_CONNECTION_SLOT_STATES state;
 	POOL_CONNECTION *con;
 }			ChildBackendConnectionSlot;
 
@@ -352,8 +360,10 @@ typedef struct ChildBackendConnection
 {
 	StartupPacket 		*sp;			/* startup packet info */
 	bool 				borrowed;		/* true if borrowed from global pool */
+	LEASE_TYPES			lease_type;		/* lease type */
 	BackendEndPoint*	backend_end_point; /* Reference to global pool end point in shared mem */
 	int					pool_id;		/* global pool id */
+	bool				need_push_back;	/* true if this connection needs to be pushed back to global pool */
 	ChildBackendConnectionSlot slots[MAX_NUM_BACKENDS];
 } 			ChildBackendConnection;
 

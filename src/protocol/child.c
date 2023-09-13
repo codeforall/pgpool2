@@ -593,7 +593,7 @@ backend_cleanup(POOL_CONNECTION * volatile *frontend, POOL_CONNECTION_POOL * vol
 	/* reset the config parameters */
 	reset_all_variables(NULL, NULL);
 	ChildBackendConnection* current_backend_connection = GetChildBackendConnection();
-	if (current_backend_connection->borrowed == false)
+	if (ChildBackendConnectionNeedPush())
 	{
 		ereport(LOG,
 				(errmsg("Backend connection for:%s:%s pushed back to global pool:%d",
@@ -602,7 +602,8 @@ backend_cleanup(POOL_CONNECTION * volatile *frontend, POOL_CONNECTION_POOL * vol
 		ExportLocalSocketsToBackendPool();
 	}
 	else
-		ReleasePooledConnectionFromChild(parent_link_fd);
+		ReleasePooledConnectionFromChild(parent_link_fd, false);
+	ClearChildBackendConnection();
 	return cache_connection;
 }
 
@@ -1023,6 +1024,59 @@ StartupPacketCopy(StartupPacket *sp)
 	return new_sp;
 }
 
+static void
+connect_missing_backend_nodes(StartupPacket *sp, POOL_CONNECTION * frontend, int pool_id)
+{
+	int i;
+	int reconnect_count = 0;
+	ChildBackendConnection *child_backend_connection = GetChildBackendConnection();
+
+	PG_TRY();
+	{
+		MemoryContext frontend_auth_cxt, oldContext;
+
+		for (i = 0; i < NUM_BACKENDS; i++)
+		{
+			if (child_backend_connection->slots[i].state == CONNECTION_SLOT_SOCKET_CONNECTION_ONLY)
+			{
+				pool_ssl_negotiate_clientserver(CONNECTION(child_backend_connection, i));
+				send_startup_packet(&CONNECTION_SLOT(child_backend_connection, i), sp);
+				reconnect_count++;
+			}
+		}
+		if (reconnect_count > 0)
+		{
+			/*
+			* do authentication stuff
+			*/
+			frontend_auth_cxt = AllocSetContextCreate(CurrentMemoryContext,
+																	"frontend_auth",
+																	ALLOCSET_DEFAULT_SIZES);
+			oldContext = MemoryContextSwitchTo(frontend_auth_cxt);
+
+			/* do authentication against backend */
+			pool_do_auth(frontend, child_backend_connection);
+
+			MemoryContextSwitchTo(oldContext);
+			MemoryContextDelete(frontend_auth_cxt);
+		}
+
+
+	}
+	PG_CATCH();
+	{
+		DiscardBackendConnection(true);
+		// pool_discard_cp(sp->user, sp->database, sp->major);
+		// topmem_sp = NULL;
+		PG_RE_THROW();
+	}
+	PG_END_TRY();
+
+	/* At this point, we need to free previously allocated memory for the
+	 * startup packet if no backend is up.
+	 */
+}
+
 /*
  * Create a new connection to backend.
  * Authentication is performed if requested by backend.
@@ -1040,7 +1094,7 @@ connect_backend(StartupPacket *sp, POOL_CONNECTION * frontend, int pool_id)
 		pool_send_error_message(frontend, sp->major, "XX000", "all backend nodes are down, pgpool requires at least one valid node", "",
 								"repair the backend nodes and restart pgpool", __FILE__, __LINE__);
 		ereport(ERROR,
-				(errmsg("unable to connect to backend"),
+			(errmsg("unable to connect to backend"),
 				 errdetail("all backend nodes are down, pgpool requires at least one valid node"),
 				 errhint("repair the backend nodes and restart pgpool")));
 	}
@@ -1072,7 +1126,6 @@ connect_backend(StartupPacket *sp, POOL_CONNECTION * frontend, int pool_id)
 				send_startup_packet(&CONNECTION_SLOT(backend, i), sp);
 			}
 		}
-
 		InitializeChildLocalBackendConnection(pool_id, sp);
 		ExportLocalBackendConnectionToPool();
 
@@ -1093,7 +1146,7 @@ connect_backend(StartupPacket *sp, POOL_CONNECTION * frontend, int pool_id)
 	}
 	PG_CATCH();
 	{
-		DiscardChildLocalBackendConnection(true);
+		DiscardBackendConnection(true);
 		// pool_discard_cp(sp->user, sp->database, sp->major);
 		// topmem_sp = NULL;
 		PG_RE_THROW();
@@ -2061,17 +2114,17 @@ retry_startup:
 
 	if (lease_type == LEASE_TYPE_DISCART_AND_CREATE || lease_type == LEASE_TYPE_READY_TO_USE)
 	{
-		ereport(LOG,
+		ereport(DEBUG2,
 				(errmsg("received %d sockets from parent pool_id:%d", count, pro_info->pool_id),
 				 errdetail("database:%s user:%s protoMajor:%d", frontend->database, frontend->username, frontend->protoVersion)));
-		ImportPoolConnectionIntoChild(pro_info->pool_id, sockets);
+		ImportPoolConnectionIntoChild(pro_info->pool_id, sockets, lease_type);
 	}
 
 	if (lease_type == LEASE_TYPE_READY_TO_USE)
 	{
 		/* TODO Handle broken sockets and startup packet comparison */
 		ereport(LOG,
-				(errmsg("Using the exisiting pooled connection at pool_id:%d", count, pro_info->pool_id),
+				(errmsg("Using the exisiting pooled connection at pool_id:%d", pro_info->pool_id),
 				 errdetail("database:%s user:%s protoMajor:%d", frontend->database, frontend->username, frontend->protoVersion)));
 		if (!connect_using_existing_connection(frontend, backend, sp))
 		{
@@ -2081,26 +2134,14 @@ retry_startup:
 	}
 	else if (lease_type == LEASE_TYPE_DISCART_AND_CREATE)
 	{
-		DiscardPooledConnectio(pro_info->pool_id);
-		DiscardChildLocalBackendConnection(true);	
+		DiscardBackendConnection(false);	
+		ClearChildPooledConnectio();
 	}
 
 	if (lease_type == LEASE_TYPE_DISCART_AND_CREATE || lease_type == LEASE_TYPE_EMPTY_SLOT_RESERVED)
 	{
 		/* Create a new connection */
 		return connect_backend(sp, frontend, pro_info->pool_id);
-	}
-
-	if (lease_type == LEASE_TYPE_NO_AVAILABLE_SLOT)
-	{
-		ereport(LOG,
-				(errmsg("no backend pool available"),
-				 errdetail("database:%s user:%s protoMajor:%d", frontend->database, frontend->username, frontend->protoVersion)));
-		/* No slot available, wait for a slot to be available */
-		// WaitForSlotToBeAvailable(pro_info->pool_id);
-		/* Try again */
-		// return get_backend_connection(frontend);
-		return NULL;
 	}
 
 	if (lease_type == LEASE_TYPE_NO_AVAILABLE_SLOT)
