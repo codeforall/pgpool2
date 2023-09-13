@@ -26,17 +26,13 @@
 
 extern ConnectionPoolEntry	*ConnectionPool;
 
-// extern POOL_CONNECTION_POOL * pool_connection_pool; /* connection pool */
-
-
 extern void pool_init_cp(int parent_link_fd);
 
-bool DiscardChildLocalBackendConnection(bool close_socket);
-bool DiscardPooledConnectio(int pool_id);
+bool DiscardBackendConnection(bool release_pool);
+bool ClearChildPooledConnectio(void);
 
 extern ChildBackendConnection* GetChildBackendConnection(void);
 extern bool ConnectBackendSocktes(void);
-extern POOL_CONNECTION_POOL * pool_get_cp(char *user, char *database, int protoMajor, int check_socket);
 extern void pool_discard_cp(char *user, char *database, int protoMajor);
 extern void pool_backend_timer(void);
 extern void pool_connection_pool_timer(POOL_CONNECTION_POOL * backend);
@@ -53,22 +49,29 @@ extern int	in_use_backend_id(POOL_CONNECTION_POOL *pool);
 
 /* Global connection pool */
 
+extern BackendEndPoint* GetChildBorrowedBackendEndPoint(void);
+extern bool StorePasswordInformation(char* password, int pwd_size, PasswordType passwordType);
+extern bool SaveAuthKindForBackendConnection(int auth_kind);
+extern int GetAuthKindForCurrentPoolBackendConnection(void);
 
 extern size_t get_global_connection_pool_shared_mem_size(void);
 extern void init_global_connection_pool(void);
 extern bool InitializeChildLocalBackendConnection(int pool_id, StartupPacket* sp);
-extern bool ImportPoolConnectionIntoChild(int pool_id, int *sockets);;
+extern bool ImportPoolConnectionIntoChild(int pool_id, int *sockets, LEASE_TYPES lease_type);
 extern bool LeasePooledConnectionToChild(IPC_Endpoint* ipc_endpoint);
 extern int GetPooledConnectionForLending(char *user, char *database, int protoMajor, LEASE_TYPES *lease_type);
 extern bool ExportLocalBackendConnectionToPool(void);
 extern bool ExportLocalSocketsToBackendPool(void);
-extern bool InstallSocketsInConnectionPool(int pool_id, int *sockets);
+extern bool InstallSocketsInConnectionPool(ConnectionPoolEntry* pool_entry, int *sockets);
 extern BackendEndPoint* GetBackendEndPoint(int pool_id);
 extern ConnectionPoolEntry* GetConnectionPoolEntry(int pool_id);
-extern bool ReleasePooledConnection(ConnectionPoolEntry* pool_entry, IPC_Endpoint* ipc_endpoint, bool need_cleanup);
+extern ConnectionPoolEntry* GetChildConnectionPoolEntry(void);
+extern bool ChildBackendConnectionNeedPush(void);
+extern bool ReleasePooledConnection(ConnectionPoolEntry* pool_entry, IPC_Endpoint* ipc_endpoint, bool need_cleanup, bool discard);
 
 extern BackendConnection* GetBackendConnectionByForBackendPID(int backend_pid, int *backend_node_id);
 extern BackendEndPoint* GetBackendEndPointForCancelPacket(CancelPacket* cp);
+extern void ClearChildBackendConnection(void);
 
 // #define CONNECTION_SLOT(slot) ((GetChildBackendConnection())->slots[(slot)])
 // #define CONNECTION(slot) (CONNECTION_SLOT(slot)->connection)

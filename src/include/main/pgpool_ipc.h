@@ -42,6 +42,6 @@ extern LEASE_TYPES BorrowBackendConnection(int parent_link, char* database,
 extern bool ProcessChildRequestOnMain(IPC_Endpoint* ipc_endpoint);
 extern bool TransferSocketsBetweenProcesses(int process_link, int count, int *sockets);
 extern bool InformChildAboutLeaseStatus(int child_link, LEASE_TYPES lease_type);
-extern bool ReleasePooledConnectionFromChild(int parent_link);
+extern bool ReleasePooledConnectionFromChild(int parent_link, bool discard);
 extern bool SendBackendSocktesToMainPool(int parent_link, int count, int *sockets);
 #endif /* POOL_IPC_H */
