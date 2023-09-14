@@ -1326,18 +1326,19 @@ ImportPoolConnectionIntoChild(int pool_id, int *sockets, LEASE_TYPES lease_type)
 	/* Now take care of backends that were attached after the pool was created */
 
 	for (i =0; i < NUM_BACKENDS; i++)
-	{	
+	{
+		ereport(LOG,(errmsg("[%d] Pool:%d Abs:%d",i, backend_end_point->backend_status[i], BACKEND_INFO(i).backend_status)));
 		if (backend_end_point->backend_status[i] != BACKEND_INFO(i).backend_status)
 		{
-			if (backend_end_point->backend_status[i] == CON_DOWN && 
-				(BACKEND_INFO(i).backend_status == CON_UP ||
-				BACKEND_INFO(i).backend_status == CON_CONNECT_WAIT))
+			if (backend_end_point->backend_status[i] == CON_DOWN ||backend_end_point->backend_status[i] == CON_UNUSED &&
+				(BACKEND_INFO(i).backend_status == CON_UP || BACKEND_INFO(i).backend_status == CON_CONNECT_WAIT))
 			{
 				/*
 				 * Backend was down when the pool was created but now it is up
 				 * We need to update connect the backend, push back the socket to global pool
 				 * and also sync the status in the global pool
 				 */
+				ereport(LOG,(errmsg("Backend %d was down when pool was created but now it is up :%d", i,current_backend_con->slots[i].state)));
 				if (ConnectBackendSlotSocket(i) == false)
 				{
 					/* set down status to local status area */
@@ -1346,11 +1347,11 @@ ImportPoolConnectionIntoChild(int pool_id, int *sockets, LEASE_TYPES lease_type)
 				}
 				else
 				{
+					ereport(LOG,(errmsg("Backend %d was down when pool was created. Sock successfully connected:%d", i,
+					current_backend_con->slots[i].state)));
 					/* Connection was successfull */
 				}
 			}
-
-				backend_end_point->backend_status[i] = BACKEND_INFO(i).backend_status;
 		}
 	}
 	return true;

@@ -96,7 +96,7 @@ static StartupPacket *StartupPacketCopy(StartupPacket *sp);
 static void log_disconnections(char *database, char *username);
 static void print_process_status(char *remote_host, char *remote_port);
 static bool backend_cleanup(POOL_CONNECTION * volatile *frontend, POOL_CONNECTION_POOL * volatile backend, bool frontend_invalid);
-
+static void connect_missing_backend_nodes(StartupPacket *sp, POOL_CONNECTION * frontend, int pool_id);
 static void child_will_go_down(int code, Datum arg);
 static int opt_sort(const void *a, const void *b);
 
@@ -407,7 +407,7 @@ do_child(int *fds, int ipc_fd)
 		 * finish. If it actually happened, update the private backend status
 		 * because it is possible that a backend maybe went down.
 		 */
-		if (wait_for_failover_to_finish() < 0)
+		// if (wait_for_failover_to_finish() < 0)
 			pool_initialize_private_backend_status();
 
 		/*
@@ -1027,54 +1027,58 @@ StartupPacketCopy(StartupPacket *sp)
 static void
 connect_missing_backend_nodes(StartupPacket *sp, POOL_CONNECTION * frontend, int pool_id)
 {
-	int i;
+	volatile int i;
 	int reconnect_count = 0;
+	MemoryContext frontend_auth_cxt, oldContext;
 	ChildBackendConnection *child_backend_connection = GetChildBackendConnection();
-
-	PG_TRY();
+	frontend_auth_cxt = NULL;
+	for (i = 0; i < NUM_BACKENDS; i++)
 	{
-		MemoryContext frontend_auth_cxt, oldContext;
-
-		for (i = 0; i < NUM_BACKENDS; i++)
+		if (child_backend_connection->slots[i].state == CONNECTION_SLOT_SOCKET_CONNECTION_ONLY)
 		{
-			if (child_backend_connection->slots[i].state == CONNECTION_SLOT_SOCKET_CONNECTION_ONLY)
+			if (!frontend_auth_cxt)
+				frontend_auth_cxt = AllocSetContextCreate(CurrentMemoryContext,
+															"frontend_auth",
+															ALLOCSET_DEFAULT_SIZES);
+			PG_TRY();
 			{
-				pool_ssl_negotiate_clientserver(CONNECTION(child_backend_connection, i));
-				send_startup_packet(&CONNECTION_SLOT(child_backend_connection, i), sp);
+				ereport(LOG,
+					(errmsg("Backend node:%d status was changed. connecting...",i)));
+
+				pool_ssl_negotiate_clientserver(child_backend_connection->slots[i].con);
+				send_startup_packet(&child_backend_connection->slots[i], sp);
+
+				oldContext = MemoryContextSwitchTo(frontend_auth_cxt);
+				connection_do_auth(child_backend_connection, i,NULL, frontend, NULL,sp);
+				MemoryContextSwitchTo(oldContext);
+
+				child_backend_connection->slots[i].state = CONNECTION_SLOT_VALID_LOCAL_CONNECTION;
+				child_backend_connection->backend_end_point->backend_status[i] = CON_UP;
 				reconnect_count++;
 			}
+			PG_CATCH();
+			{
+				/* ignore the error message */
+				// EmitErrorReport(); For debug
+				FlushErrorState();
+				ereport(LOG,
+					(errmsg("Failed to connect backend node:%d",i)));
+				child_backend_connection->slots[i].state = CONNECTION_SLOT_SOCKET_CONNECTION_ERROR;
+			}
+			PG_END_TRY();
 		}
-		if (reconnect_count > 0)
-		{
-			/*
-			* do authentication stuff
-			*/
-			frontend_auth_cxt = AllocSetContextCreate(CurrentMemoryContext,
-																	"frontend_auth",
-																	ALLOCSET_DEFAULT_SIZES);
-			oldContext = MemoryContextSwitchTo(frontend_auth_cxt);
-
-			/* do authentication against backend */
-			pool_do_auth(frontend, child_backend_connection);
-
-			MemoryContextSwitchTo(oldContext);
-			MemoryContextDelete(frontend_auth_cxt);
-		}
-
-
 	}
-	PG_CATCH();
+	if (frontend_auth_cxt)
 	{
-		DiscardBackendConnection(true);
-		// pool_discard_cp(sp->user, sp->database, sp->major);
-		// topmem_sp = NULL;
-		PG_RE_THROW();
+		MemoryContextSwitchTo(oldContext);
+		MemoryContextDelete(frontend_auth_cxt);
 	}
-	PG_END_TRY();
 
-	/* At this point, we need to free previously allocated memory for the
-	 * startup packet if no backend is up.
-	 */
+	if (reconnect_count > 0)
+	{
+		ereport(LOG,(errmsg("Reconnected %d backend nodes to pool:%d",reconnect_count,pool_id)));
+		/* TODO push the socket back right here or should we do it at end of session ?*/
+	}
 }
 
 /*
@@ -1084,7 +1088,6 @@ connect_missing_backend_nodes(StartupPacket *sp, POOL_CONNECTION * frontend, int
 static POOL_CONNECTION_POOL *
 connect_backend(StartupPacket *sp, POOL_CONNECTION * frontend, int pool_id)
 {
-	volatile bool	topmem_sp_set = false;
 	POOL_CONNECTION_POOL *backend = GetChildBackendConnection();
 	int			i;
 
@@ -1119,8 +1122,6 @@ connect_backend(StartupPacket *sp, POOL_CONNECTION * frontend, int pool_id)
 
 				pool_ssl_negotiate_clientserver(CONNECTION(backend, i));
 
-				topmem_sp_set = true;
-
 				/* send startup packet */
 				send_startup_packet(&CONNECTION_SLOT(backend, i), sp);
 			}
@@ -1152,9 +1153,10 @@ connect_backend(StartupPacket *sp, POOL_CONNECTION * frontend, int pool_id)
 	}
 	PG_END_TRY();
 
-	/* At this point, we need to free previously allocated memory for the
-	 * startup packet if no backend is up.
-	 */
+	/* save current backend status to pool */
+	for (i = 0; i < MAX_NUM_BACKENDS; i++)
+		backend->backend_end_point->backend_status[i] = BACKEND_INFO(i).backend_status;
+
 	return GetChildBackendConnection();
 }
 
@@ -2117,10 +2119,9 @@ retry_startup:
 		ereport(LOG,
 				(errmsg("Using the exisiting pooled connection at pool_id:%d", pro_info->pool_id),
 				 errdetail("database:%s user:%s protoMajor:%d", frontend->database, frontend->username, frontend->protoVersion)));
+		connect_missing_backend_nodes(sp, frontend, pro_info->pool_id);
 		if (!connect_using_existing_connection(frontend, backend, sp))
-		{
 			return NULL;
-		}
 		return backend;
 	}
 	else if (lease_type == LEASE_TYPE_DISCART_AND_CREATE)
