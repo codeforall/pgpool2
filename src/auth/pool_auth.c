@@ -87,11 +87,12 @@ static bool get_auth_password(POOL_CONNECTION * backend, POOL_CONNECTION * front
 				  char **password, PasswordType *passwordType);
 
 /*
- * Do authentication. Assuming the only caller is
- * make_persistent_db_connection().
+ * Do authentication. Assuming the caller is
+ * make_persistent_db_connection() when.
  */
 void
-connection_do_auth(POOL_CONNECTION_POOL_SLOT * cp, char *password, StartupPacket *sp)
+connection_do_auth(ChildBackendConnection* backend_con, int slot_no,
+					POOL_CONNECTION_POOL_SLOT * con_slot, POOL_CONNECTION *frontend, char *password, StartupPacket *sp)
 {
 	char		kind;
 	int			length;
@@ -101,6 +102,9 @@ connection_do_auth(POOL_CONNECTION_POOL_SLOT * cp, char *password, StartupPacket
 	int			pid,
 				key;
 	bool		keydata_done;
+	bool		pooled_con = false;
+	PasswordType passwordType = PASSWORD_TYPE_UNKNOWN;
+	ChildBackendConnectionSlot* cp = backend_con? cp = &backend_con->slots[slot_no] : con_slot;
 
 	/*
 	 * read kind expecting 'R' packet (authentication response)
@@ -129,6 +133,52 @@ connection_do_auth(POOL_CONNECTION_POOL_SLOT * cp, char *password, StartupPacket
 		ereport(ERROR,
 				(errmsg("failed to authenticate"),
 				 errdetail("invalid authentication message response type, Expecting 'R' and received '%c'", kind)));
+	}
+	if (backend_con)
+	{
+		if (backend_con->backend_end_point->pwd_size <= 0)
+		{
+			passwordType = PASSWORD_TYPE_UNKNOWN;
+			password = "";
+			/* Read the password from pool_passwd ?? */
+			get_auth_password(cp->con, frontend, 1,
+				  &password, &passwordType);
+		}
+		else
+		{
+			passwordType = backend_con->backend_end_point->passwordType;
+			password = backend_con->backend_end_point->password;
+		}
+		cp = &backend_con->slots[slot_no];
+
+		if (passwordType == PASSWORD_TYPE_AES)
+		{
+			/*
+			* decrypt the stored AES password for comparing it
+			*/
+			password = get_decrypted_password(backend_con->backend_end_point->password);
+			if (password == NULL)
+				ereport(ERROR,
+						(errmsg("backend:%d authentication failed", slot_no),
+						errdetail("unable to decrypt password from pool_passwd"),
+						errhint("verify the valid pool_key exists")));
+			/* we have converted the password to plain text */
+			passwordType = PASSWORD_TYPE_PLAINTEXT;
+		}
+		pooled_con = true;
+	}
+	else
+	{
+		/* If password is prefixed with md5 treat it as md5 Password */
+		if (!strncmp("md5", password, 3) && (strlen(password) - 3) == MD5_PASSWD_LEN)
+		{
+			password = password + 3;
+			passwordType = PASSWORD_TYPE_MD5;
+		}
+		else
+		{
+			passwordType = PASSWORD_TYPE_PLAINTEXT;
+		}
 	}
 
 	/* read message length */
@@ -194,14 +244,14 @@ connection_do_auth(POOL_CONNECTION_POOL_SLOT * cp, char *password, StartupPacket
 		/* set buffer address for building md5 password */
 		buf1 = buf + MD5_PASSWD_LEN + 4;
 
-		/*
-		 * If the supplied password is already in md5 hash format, we just
-		 * copy it. Otherwise calculate the md5 hash value.
-		 */
-		if (!strncmp("md5", password, 3) && (strlen(password) - 3) == MD5_PASSWD_LEN)
-			memcpy(buf1, password + 3, MD5_PASSWD_LEN + 1);
-		else
+		if (passwordType == PASSWORD_TYPE_PLAINTEXT)
 			pool_md5_encrypt(password, sp->user, strlen(sp->user), buf1);
+		else if (passwordType == PASSWORD_TYPE_MD5)
+			memcpy(buf1, password, MD5_PASSWD_LEN + 1);
+		else
+			ereport(ERROR,
+				(errmsg("md5 authentication failed for user:%s", sp->user),
+					 errdetail("invalid password type")));
 
 		pool_md5_encrypt(buf1, salt, 4, buf + 3);
 		memcpy(buf, "md5", 3);
@@ -218,6 +268,11 @@ connection_do_auth(POOL_CONNECTION_POOL_SLOT * cp, char *password, StartupPacket
 	}
 	else if (auth_kind == AUTH_REQ_SASL)
 	{
+		if (passwordType != PASSWORD_TYPE_PLAINTEXT)
+			ereport(ERROR,
+				(errmsg("SCRAM authentication failed for user:%s", sp->user),
+					 errdetail("invalid password type")));
+
 		if (do_SCRAM(NULL, cp->con, PROTO_MAJOR_V3, length, sp->user, password, PASSWORD_TYPE_PLAINTEXT) == false)
 		{
 			ereport(ERROR,

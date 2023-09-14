@@ -157,7 +157,7 @@ make_persistent_db_connection(
 	PG_TRY();
 	{
 		send_startup_packet(cp, sp);
-		connection_do_auth(cp, password, sp);
+		connection_do_auth(NULL,-1, cp,NULL, password, sp);
 	}
 	PG_CATCH();
 	{
