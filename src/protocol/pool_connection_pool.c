@@ -1308,6 +1308,9 @@ ImportPoolConnectionIntoChild(int pool_id, int *sockets, LEASE_TYPES lease_type)
 	current_backend_con->borrowed = true;
 	current_backend_con->lease_type = lease_type;
 
+	if (lease_type == LEASE_TYPE_EMPTY_SLOT_RESERVED)
+		return true;
+
 	import_pooled_startup_packet_into_child(backend_end_point);
 
 	for (i = 0; i < num_sockets; i++)
