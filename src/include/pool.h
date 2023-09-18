@@ -200,6 +200,12 @@ typedef struct
 													 * from frontend) */
 	PasswordType passwordType;
 
+	time_t		client_connection_time;
+	time_t		client_disconnection_time;
+	bool		client_connected;
+	int			client_connection_count;
+	int			client_disconnection_count;
+
     int			num_sockets;
     int         backend_ids[MAX_NUM_BACKENDS];
 	BackendConnection conn_slots[MAX_NUM_BACKENDS];
@@ -307,6 +313,7 @@ typedef struct
 	POOL_ENTRY_STATUS	status;
     int     pool_id;
 	pid_t	borrower_pid;
+	int		borrower_proc_info_id;
 	bool	need_cleanup;
 	time_t 	leased_time;
 	int		leased_count;

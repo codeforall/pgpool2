@@ -97,16 +97,9 @@ BorrowBackendConnection(int	parent_link, char* database, char* user, int major, 
                 (errmsg("failed to write IPC packet type:%c to parent:%d", type, parent_link)));
         return LEASE_TYPE_LEASE_FAILED;
     }
-    /* Since the child needs a socket to procees further, So wait for the reply */
 
     /*
-     * Possible responses
-     * 1. IPC_SOCKET_TRANSFER_MESSAGE:   Parent returns the array of sockets along with pool_index
-     * 2. IPC_NO_CONN_AVAILABLE_MESSAGE: No free connection availble. POOL is fully occupied
-     * 3. IPC_CONNECT_AND_PROCEED_MESSAGE: Parent asks the child to connect to the backend and proceed
-     *                                    Child will return the connection to parent after use
-     * 4. IPC_PACKET_NON_POOL_CONNECT:  The particular DB-USER pair is not eligible for pooling
-     *
+     * Read the lease type response from main process
      */
 	if (socket_read(parent_link, &type, 1, MAX_WAIT_FOR_PARENT_RESPONSE) != 1)
     {
@@ -115,7 +108,9 @@ BorrowBackendConnection(int	parent_link, char* database, char* user, int major, 
                 (errmsg("failed to read IPC packet type:%c from parent:%d", type, parent_link)));
         return LEASE_TYPE_LEASE_FAILED;
     }
-
+    /* In case of a successful lease. main process should already have updated the pool_id
+     * in process info for this child
+     */
     if (type == IPC_READY_TO_USE_CONNECTION_MESSAGE || type == IPC_DISCARD_AND_REUSE_MESSAGE)
     {
         BackendEndPoint* backend_end_point = GetBackendEndPoint(pro_info->pool_id);
