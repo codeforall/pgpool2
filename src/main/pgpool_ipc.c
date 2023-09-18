@@ -108,7 +108,8 @@ BorrowBackendConnection(int	parent_link, char* database, char* user, int major, 
                 (errmsg("failed to read IPC packet type:%c from parent:%d", type, parent_link)));
         return LEASE_TYPE_LEASE_FAILED;
     }
-    /* In case of a successful lease. main process should already have updated the pool_id
+    /*
+     * In case of a successful lease. main process should already have updated the pool_id
      * in process info for this child
      */
     if (type == IPC_READY_TO_USE_CONNECTION_MESSAGE || type == IPC_DISCARD_AND_REUSE_MESSAGE)

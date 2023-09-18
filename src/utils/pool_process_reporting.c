@@ -1515,7 +1515,7 @@ nodes_reporting(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend)
  * Used by pcp_proc_info and SHOW pool_pools
  */
 POOL_REPORT_POOLS *
-get_pools(int *nrows)
+get_pools_old(int *nrows)
 {
 	int			child,
 				pool,
@@ -1689,6 +1689,161 @@ get_pools(int *nrows)
 	return pools;
 }
 
+/*
+ * Used by pcp_proc_info and SHOW pool_pools
+ */
+POOL_REPORT_POOLS *
+get_pools(int *nrows)
+{
+	int			pool_id,
+				backend_id;
+	int			lines = 0;
+
+	POOL_REPORT_POOLS *pools = palloc0(pool_config->max_pool_size * NUM_BACKENDS * sizeof(POOL_REPORT_POOLS));
+
+	for (pool_id = 0; pool_id < pool_config->max_pool_size; pool_id++)
+	{
+		ProcessInfo *pi = NULL;
+
+		ConnectionPoolEntry* pool_entry =  GetConnectionPoolEntry(pool_id);
+		if (pool_entry->borrower_proc_info_id >= 0)
+			pi = &process_info[pool_entry->borrower_proc_info_id];
+
+		int idle_duration = 0; // TODO pi->connection_info[pool * MAX_NUM_BACKENDS].client_idle_duration;
+		int cliet_idle_time = pool_config->client_idle_limit;
+
+		if (pool_config->client_idle_limit > 0)
+		{
+			cliet_idle_time = pool_config->client_idle_limit - idle_duration;
+		}
+
+		for (backend_id = 0; backend_id < NUM_BACKENDS; backend_id++)
+		{
+			snprintf(pools[lines].pool_pid, sizeof(pools[lines].pool_pid), "%d", pool_entry->borrower_pid);
+
+			if (pi && pi->start_time)
+			{
+				if (pool_config->child_life_time > 0 )
+				{
+					char proc_start_time[POOLCONFIG_MAXDATELEN + 1];
+					int wait_for_connect_time = pool_config->child_life_time - pi->wait_for_connect;
+
+					strftime(proc_start_time, sizeof(proc_start_time),
+								"%Y-%m-%d %H:%M:%S", localtime(&pi->start_time));
+					snprintf(pools[lines].process_start_time, sizeof(pools[lines].process_start_time),
+								"%s (%d:%02d before process restarting)", proc_start_time,
+								wait_for_connect_time / 60,
+								wait_for_connect_time % 60);
+				}
+				else
+				{
+					strftime(pools[lines].process_start_time, sizeof(pools[lines].process_start_time),
+								"%Y-%m-%d %H:%M:%S", localtime(&pi->start_time));
+				}
+			}
+			else
+				*(pools[lines].process_start_time) = '\0';
+
+			snprintf(pools[lines].pool_id, sizeof(pools[lines].pool_id), "%d", pool_id);
+
+			snprintf(pools[lines].backend_id, sizeof(pools[lines].backend_id), "%d", backend_id);
+
+			snprintf(pools[lines].client_connection_count, sizeof(pools[lines].client_connection_count),
+						"%d", pool_entry->endPoint.client_connection_count);
+
+			if (pool_entry->endPoint.client_connection_time == 0)
+			{
+				*(pools[lines].client_connection_time) = '\0';
+			}
+			else
+			{
+				strftime(pools[lines].client_connection_time, sizeof(pools[lines].client_connection_time),
+						"%Y-%m-%d %H:%M:%S", localtime(&pool_entry->endPoint.client_connection_time));
+			}
+
+			if (pool_entry->endPoint.client_disconnection_time == 0)
+			{
+				*(pools[lines].client_disconnection_time) = '\0';
+			}
+			else
+			{
+				strftime(pools[lines].client_disconnection_time, sizeof(pools[lines].client_disconnection_time),
+						"%Y-%m-%d %H:%M:%S", localtime(&pool_entry->endPoint.client_disconnection_time));
+			}
+
+			if ((pool_config->client_idle_limit > 0)
+				&& pi)
+			{
+				snprintf(pools[lines].client_idle_duration, sizeof(pools[lines].client_idle_duration),
+							"%d (%d:%02d before client disconnected)", idle_duration,
+							cliet_idle_time / 60,
+							cliet_idle_time % 60);
+			}
+			else
+				snprintf(pools[lines].client_idle_duration, sizeof(pools[lines].client_idle_duration),
+							"%d", idle_duration);
+
+			if (strlen(pool_entry->endPoint.database) == 0)
+			{
+				StrNCpy(pools[lines].database, "", POOLCONFIG_MAXIDENTLEN);
+				StrNCpy(pools[lines].username, "", POOLCONFIG_MAXIDENTLEN);
+				*(pools[lines].backend_connection_time) = '\0';
+				snprintf(pools[lines].pool_majorversion, sizeof(pools[lines].pool_majorversion), "%d", 0);
+				snprintf(pools[lines].pool_minorversion, sizeof(pools[lines].pool_minorversion), "%d", 0);
+			}
+			else
+			{
+				StrNCpy(pools[lines].database, pool_entry->endPoint.database, POOLCONFIG_MAXIDENTLEN);
+				StrNCpy(pools[lines].username, pool_entry->endPoint.user, POOLCONFIG_MAXIDENTLEN);
+				strftime(pools[lines].backend_connection_time, sizeof(pools[lines].backend_connection_time),
+							"%Y-%m-%d %H:%M:%S", localtime(&pool_entry->endPoint.conn_slots[backend_id].create_time));
+				snprintf(pools[lines].pool_majorversion, sizeof(pools[lines].pool_majorversion), "%d",
+							3);
+				snprintf(pools[lines].pool_minorversion, sizeof(pools[lines].pool_minorversion), "%d",
+							0);
+			}
+			snprintf(pools[lines].pool_counter, sizeof(pools[lines].pool_counter), "%d",
+						pool_entry->endPoint.conn_slots[backend_id].counter);
+			snprintf(pools[lines].pool_backendpid, sizeof(pools[lines].pool_backendpid), "%d",
+						ntohl(pool_entry->endPoint.conn_slots[backend_id].pid));
+			snprintf(pools[lines].pool_connected, sizeof(pools[lines].pool_connected), "%d",pi?pi->connected:0);
+
+			if (!pi)
+				StrNCpy(pools[lines].status, "Pool not leased", POOLCONFIG_MAXPROCESSSTATUSLEN);
+			else
+			{
+				switch(pi->status)
+				{
+					case WAIT_FOR_CONNECT:
+						StrNCpy(pools[lines].status, "Wait for connection", POOLCONFIG_MAXPROCESSSTATUSLEN);
+						break;
+					case COMMAND_EXECUTE:
+						StrNCpy(pools[lines].status, "Execute command", POOLCONFIG_MAXPROCESSSTATUSLEN);
+						break;
+					case IDLE:
+						StrNCpy(pools[lines].status, "Idle", POOLCONFIG_MAXPROCESSSTATUSLEN);
+						break;
+					case IDLE_IN_TRANS:
+						StrNCpy(pools[lines].status, "Idle in transaction", POOLCONFIG_MAXPROCESSSTATUSLEN);
+						break;
+					case CONNECTING:
+						StrNCpy(pools[lines].status, "Connecting", POOLCONFIG_MAXPROCESSSTATUSLEN);
+						break;
+					default:
+						*(pools[lines].status) = '\0';
+				}
+			}
+
+			if (pi && backend_id == pool_entry->endPoint.load_balancing_node)
+				StrNCpy(pools[lines].load_balance_node, "1", POOLCONFIG_MAXPROCESSSTATUSLEN);
+			else
+				StrNCpy(pools[lines].load_balance_node, "0", POOLCONFIG_MAXPROCESSSTATUSLEN);
+			lines++;
+		}
+	}
+	*nrows = lines;
+	return pools;
+}
 /*
  * SHOW　pool_pools;
  */

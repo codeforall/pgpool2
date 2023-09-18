@@ -2114,12 +2114,13 @@ retry_startup:
 	lease_type = BorrowBackendConnection(parent_link_fd, frontend->database,
 						frontend->username, frontend->protoVersion, 0, &count, sockets);
 
+	ImportPoolConnectionIntoChild(pro_info->pool_id, sockets, lease_type);
+
 	if (lease_type == LEASE_TYPE_DISCART_AND_CREATE || lease_type == LEASE_TYPE_READY_TO_USE)
 	{
 		ereport(DEBUG2,
 				(errmsg("received %d sockets from parent pool_id:%d", count, pro_info->pool_id),
 				 errdetail("database:%s user:%s protoMajor:%d", frontend->database, frontend->username, frontend->protoVersion)));
-		ImportPoolConnectionIntoChild(pro_info->pool_id, sockets, lease_type);
 	}
 
 	if (lease_type == LEASE_TYPE_READY_TO_USE)
