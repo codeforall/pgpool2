@@ -57,7 +57,6 @@ pool_init_session_context(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * bac
 	session_context = &session_context_d;
 	ProcessInfo *process_info;
 	int			node_id;
-	int			i;
 
 	/* Clear session context memory */
 	memset(&session_context_d, 0, sizeof(session_context_d));
@@ -107,11 +106,7 @@ pool_init_session_context(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * bac
 
 	session_context->load_balance_node_id = node_id;
 
-	for (i = 0; i < NUM_BACKENDS; i++)
-	{
-		pool_coninfo(session_context->process_context->proc_id,
-					 pool_pool_index(), i)->load_balancing_node = node_id;
-	}
+	backend->backend_end_point->load_balancing_node = node_id;
 
 	ereport(DEBUG5,
 			(errmsg("initializing session context"),

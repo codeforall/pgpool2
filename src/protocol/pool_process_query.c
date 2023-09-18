@@ -4863,16 +4863,14 @@ SELECT_RETRY:
 	{
 		/* select load balancing node */
 		POOL_SESSION_CONTEXT *session_context;
+		ChildBackendConnection *child_con = GetChildBackendConnection();
 		int			node_id;
 
 		session_context = pool_get_session_context(false);
 		node_id = select_load_balancing_node();
 
-		for (i = 0; i < NUM_BACKENDS; i++)
-		{
-			pool_coninfo(session_context->process_context->proc_id,
-						 pool_pool_index(), i)->load_balancing_node = node_id;
-		}
+		if(child_con->backend_end_point)
+			child_con->backend_end_point->load_balancing_node = node_id;
 	}
 
 	for (i = 0; i < NUM_BACKENDS; i++)

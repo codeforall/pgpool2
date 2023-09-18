@@ -180,52 +180,35 @@ pool_unset_connection_will_be_terminated(BackendConnection * backend_connection)
  * Set frontend connected flag
  */
 void
-pool_coninfo_set_frontend_connected(int proc_id, int pool_index)
+pool_coninfo_set_frontend_connected(void)
 {
-	ConnectionInfo *con;
-	int			i;
-
-	for (i = 0; i < NUM_BACKENDS; i++)
+	ChildBackendConnection* backend_con = GetChildBackendConnection();
+	if (!backend_con->backend_end_point)
 	{
-		if (!VALID_BACKEND(i))
-			continue;
-
-		con = pool_coninfo(proc_id, pool_index, i);
-
-		if (con == NULL)
-		{
-			elog(WARNING, "failed to get connection info while marking the frontend is connected for pool");
+			elog(WARNING, "failed to get pooled connection for child process while marking the frontend is connected for pool");
 			return;
-		}
-		con->connected = true;
-		con->client_connection_time = time(NULL);
 	}
+
+	backend_con->backend_end_point->client_connected = true;
+	backend_con->backend_end_point->client_connection_time = time(NULL);
+	backend_con->backend_end_point->client_connection_count++;
 }
 
 /*
  * Unset frontend connected flag
  */
 void
-pool_coninfo_unset_frontend_connected(int proc_id, int pool_index)
+pool_coninfo_unset_frontend_connected(void)
 {
-	ConnectionInfo *con;
-	int			i;
-
-	for (i = 0; i < NUM_BACKENDS; i++)
+	ChildBackendConnection* backend_con = GetChildBackendConnection();
+	if (!backend_con->backend_end_point)
 	{
-		if (!VALID_BACKEND(i))
-			continue;
-
-		con = pool_coninfo(proc_id, pool_index, i);
-
-		if (con == NULL)
-		{
-			elog(WARNING, "failed to get connection info while marking the frontend is not connected for pool");
+			elog(WARNING, "failed to get pooled connection for child process while marking the frontend is not connected for pool");
 			return;
-		}
-		con->connected = false;
-		con->client_disconnection_time = time(NULL);
 	}
+	backend_con->backend_end_point->client_connected = false;
+	backend_con->backend_end_point->client_disconnection_time = time(NULL);
+	backend_con->backend_end_point->client_disconnection_count++;
 }
 
 /*

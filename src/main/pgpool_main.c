@@ -3086,7 +3086,7 @@ initialize_shared_mem_objects(bool clear_memcache_oidmaps)
 	pool_config->backend_desc = backend_desc;
 
 	/* get the shared memory from main segment*/
-	con_info = (ConnectionInfo *)pool_shared_memory_segment_get_chunk(pool_coninfo_size());
+	// con_info = (ConnectionInfo *)pool_shared_memory_segment_get_chunk(pool_coninfo_size());
 
 	ConnectionPool = (ConnectionPoolEntry *)pool_shared_memory_segment_get_chunk(get_global_connection_pool_shared_mem_size());
 	init_global_connection_pool();
@@ -3808,6 +3808,26 @@ sync_backend_from_watchdog(void)
 	/* Kill children and restart them if needed */
 	if (need_to_restart_children)
 	{
+		ConnectionPoolEntry* connection_pool = GetConnectionPool();
+		for (i = 0; i < pool_config->max_pool_size; i++)
+		{
+			if (connection_pool[i].borrower_pid > 0 )
+			{
+				int		idx;
+				for (idx = 0; idx < down_node_ids_index; idx++)
+				{
+					int	node_id = down_node_ids[idx];
+					if (connection_pool[i].endPoint.load_balancing_node == node_id)
+					{
+						ereport(LOG,
+							(errmsg("child process with PID:%d needs restart, because pool %d uses backend %d",
+								connection_pool[i].borrower_pid, i, node_id)));
+						/* Do restart or whatever...			restart = true; */
+					}
+				}
+			}
+		}
+
 		for (i = 0; i < pool_config->num_init_children; i++)
 		{
 			bool		restart = false;
@@ -4395,6 +4415,11 @@ kill_failover_children(FAILOVER_CONTEXT *failover_context, int node_id)
 
 		failover_context->need_to_restart_children = true;
 		failover_context->partial_restart = true;
+		/*
+		 * We do not need to restart the child process. All we need to do is to
+		 * ask children that are using the failed node to return the pool back to
+		 * gloabl pool
+		 */
 
 		for (i = 0; i < pool_config->num_init_children; i++)
 		{
@@ -4436,7 +4461,10 @@ kill_failover_children(FAILOVER_CONTEXT *failover_context, int node_id)
 		ereport(LOG,
 				(errmsg("Restart all children")));
 
-		/* kill all children */
+		/*
+		 * kill all children
+		 * Since global connection pool we only need to kill the children that have a leased pool connection
+		 */
 		for (i = 0; i < pool_config->num_init_children; i++)
 		{
 			pid_t		pid = process_info[i].pid;
@@ -5165,48 +5193,23 @@ service_child_processes(void)
 static int
 select_victim_processes(int *process_info_idxs, int count)
 {
-		int i, ki;
-		bool found_enough = false;
-		int selected_count = 0;
+	int i;
+	int selected_count = 0;
 
-		if (count <= 0)
-			return 0;
+	if (count <= 0)
+		return 0;
 
-		for (i = 0; i < pool_config->num_init_children; i++)
+	for (i = 0; i < pool_config->num_init_children; i++)
+	{
+		/* Only the child process in waiting for connect can be terminated */
+		if (process_info[i].pid && process_info[i].status == WAIT_FOR_CONNECT)
 		{
-			/* Only the child process in waiting for connect can be terminated */
-			if (process_info[i].pid && process_info[i].status == WAIT_FOR_CONNECT)
-			{
-				if (selected_count < count)
-				{
-					process_info_idxs[selected_count++] = i;
-				}
-				else
-				{
-					found_enough = true;
-					/* we don't bother selecting the child having least pooled connection with
-					 * aggressive strategy
-					 */
-					if (pool_config->process_management_strategy != PM_STRATEGY_AGGRESSIVE)
-					{
-						for (ki = 0; ki < count; ki++)
-						{
-							int old_index = process_info_idxs[ki];
-							if (old_index < 0 || process_info[old_index].pooled_connections > process_info[i].pooled_connections)
-							{
-								process_info_idxs[ki] = i;
-								found_enough = false;
-								break;
-							}
-							if (process_info[old_index].pooled_connections)
-								found_enough = false;
-						}
-					}
-				}
-			}
-			if (found_enough)
+			if (selected_count < count)
+				process_info_idxs[selected_count++] = i;
+			else
 				break;
 		}
+	}
 	return selected_count;
 }
 

@@ -280,7 +280,7 @@ do_child(int *fds, int ipc_fd)
 			pool_session_context_destroy();
 
 			/* Mark this connection pool is not connected from frontend */
-			pool_coninfo_unset_frontend_connected(pool_get_process_context()->proc_id, pool_pool_index());
+			pool_coninfo_unset_frontend_connected();
 
 			/* increment queries counter if necessary */
 			if (pool_config->child_max_connections > 0)
@@ -407,7 +407,7 @@ do_child(int *fds, int ipc_fd)
 		 * finish. If it actually happened, update the private backend status
 		 * because it is possible that a backend maybe went down.
 		 */
-		// if (wait_for_failover_to_finish() < 0)
+		if (wait_for_failover_to_finish() < 0)
 			pool_initialize_private_backend_status();
 
 		/*
@@ -448,7 +448,7 @@ do_child(int *fds, int ipc_fd)
 		/*
 		 * Mark this connection pool is connected from frontend
 		 */
-		pool_coninfo_set_frontend_connected(pool_get_process_context()->proc_id, pool_pool_index());
+		pool_coninfo_set_frontend_connected();
 
 		/* create memory context for query processing */
 		QueryContext = AllocSetContextCreate(ProcessLoopContext,
@@ -477,7 +477,7 @@ do_child(int *fds, int ipc_fd)
 		pool_session_context_destroy();
 
 		/* Mark this connection pool is not connected from frontend */
-		pool_coninfo_unset_frontend_connected(pool_get_process_context()->proc_id, pool_pool_index());
+		pool_coninfo_unset_frontend_connected();
 		update_pooled_connection_count();
 		accepted = 0;
 		connection_count_down();

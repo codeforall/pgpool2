@@ -47,7 +47,7 @@ extern void update_pooled_connection_count(void);
 
 
 /* Global connection pool */
-
+extern ConnectionPoolEntry* GetConnectionPool(void);
 extern BackendEndPoint* GetChildBorrowedBackendEndPoint(void);
 extern bool StorePasswordInformation(char* password, int pwd_size, PasswordType passwordType);
 extern bool SaveAuthKindForBackendConnection(int auth_kind);
@@ -68,7 +68,7 @@ extern ConnectionPoolEntry* GetChildConnectionPoolEntry(void);
 extern bool ChildBackendConnectionNeedPush(void);
 extern bool ReleasePooledConnection(ConnectionPoolEntry* pool_entry, IPC_Endpoint* ipc_endpoint, bool need_cleanup, bool discard);
 
-extern BackendConnection* GetBackendConnectionByForBackendPID(int backend_pid, int *backend_node_id);
+extern BackendConnection* GetBackendConnectionForBackendPID(int backend_pid, int *backend_node_id);
 extern BackendEndPoint* GetBackendEndPointForCancelPacket(CancelPacket* cp);
 extern void ClearChildBackendConnection(void);
 

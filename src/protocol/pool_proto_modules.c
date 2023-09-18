@@ -146,7 +146,7 @@ process_pg_terminate_backend_func(POOL_QUERY_CONTEXT * query_context)
 	if (backend_pid > 0)
 	{
 		int	backend_node = -1;
-		BackendConnection* backend_connection = GetBackendConnectionByForBackendPID(backend_pid, &backend_node);
+		BackendConnection* backend_connection = GetBackendConnectionForBackendPID(backend_pid, &backend_node);
 		if (backend_connection == NULL)
 		{
 			ereport(LOG,

@@ -65,8 +65,8 @@ extern ProcessInfo * pool_get_my_process_info(void);
 extern void pool_increment_local_session_id(void);
 extern size_t	pool_coninfo_size(void);
 extern ConnectionInfo * pool_coninfo(int child, int connection_pool, int backend);
-extern void pool_coninfo_set_frontend_connected(int proc_id, int pool_index);
-extern void pool_coninfo_unset_frontend_connected(int proc_id, int pool_index);
+extern void pool_coninfo_set_frontend_connected(void);
+extern void pool_coninfo_unset_frontend_connected(void);
 
 extern void pool_set_connection_will_be_terminated(BackendConnection * backend_connection);
 extern void pool_unset_connection_will_be_terminated(BackendConnection * backend_connection);

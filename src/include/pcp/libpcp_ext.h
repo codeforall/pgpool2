@@ -189,7 +189,8 @@ typedef struct
 	char		user[SM_USER];	/* User name */
 	int			major;			/* protocol major version */
 	int			minor;			/* protocol minor version */
-	/* Following are used by main process to return the info to child
+	/*
+	 * Following are used by main process to return the info to child
 	 * We do not lock these fields and make sure the client only read
 	 * this after receiving the indication from main process
 	 */
