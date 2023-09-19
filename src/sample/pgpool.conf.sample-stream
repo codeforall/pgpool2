@@ -208,6 +208,10 @@ backend_clustering_mode = 'streaming_replication'
                                    # Maximum number of connection pool caches
                                    # (change requires restart)
 
+#pool_availability_timeout = 5
+                                   # Maximum time in seconds to wait for pool connection
+                                   # slot to become available when the pool is full.
+
 # - Life time -
 
 #child_life_time = 5min

@@ -316,6 +316,8 @@ typedef struct
 typedef enum POOL_ENTRY_STATUS
 {
 	POOL_ENTRY_EMPTY = 0,
+	POOL_ENTRY_LOADED,	/* Intermediate status when pool info is populated
+						 * by child process but sockets are yet to be transfered */
 	POOL_ENTRY_CONNECTED
 }			POOL_ENTRY_STATUS;
 
