@@ -174,7 +174,7 @@ ProcessChildRequestOnMain(IPC_Endpoint* ipc_endpoint)
 }
 
 bool
-InformChildAboutLeaseStatus(int child_link, LEASE_TYPES lease_type)
+InformLeaseStatusToChild(int child_link, LEASE_TYPES lease_type)
 {
     char type;
     switch (lease_type)
@@ -370,9 +370,12 @@ process_push_connection_to_pool(IPC_Endpoint* ipc_endpoint)
         if (ret)
             pool_entry->status = POOL_ENTRY_CONNECTED;
         else
+        {
+            /* Mark this entry as empty, as we can't do anything witout socktes */
+            pool_entry->status = POOL_ENTRY_EMPTY;
             ereport(LOG,
                 (errmsg("InstallSocketsInConnectionPool for pool_id:%d from child:%d failed", pro_info->pool_id,ipc_endpoint->child_pid)));
-
+        }
         ret = ReleasePooledConnection(pool_entry, ipc_endpoint, !ret, false);
         if (!ret)
         ereport(LOG,

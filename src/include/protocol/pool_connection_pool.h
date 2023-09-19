@@ -29,7 +29,7 @@ extern ConnectionPoolEntry	*ConnectionPool;
 extern void pool_init_cp(int parent_link_fd);
 
 bool DiscardBackendConnection(bool release_pool);
-bool ClearChildPooledConnectio(void);
+bool ClearChildPooledConnectionData(void);
 
 extern ChildBackendConnection* GetChildBackendConnection(void);
 extern bool ConnectBackendSocktes(void);
@@ -56,7 +56,7 @@ extern int GetAuthKindForCurrentPoolBackendConnection(void);
 
 extern size_t get_global_connection_pool_shared_mem_size(void);
 extern void init_global_connection_pool(void);
-extern bool InitializeChildLocalBackendConnection(int pool_id, StartupPacket* sp);
+extern bool SetupNewConnectionIntoChild(StartupPacket* sp);
 extern bool ImportPoolConnectionIntoChild(int pool_id, int *sockets, LEASE_TYPES lease_type);
 extern bool LeasePooledConnectionToChild(IPC_Endpoint* ipc_endpoint);
 extern int GetPooledConnectionForLending(char *user, char *database, int protoMajor, LEASE_TYPES *lease_type);

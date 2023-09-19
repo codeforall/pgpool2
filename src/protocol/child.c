@@ -69,6 +69,8 @@
 #include "auth/pool_passwd.h"
 #include "auth/pool_hba.h"
 
+#define POOL_LEASE_RETRY_INTERVAL_USEC 500
+
 static StartupPacket *read_startup_packet(POOL_CONNECTION * cp);
 static POOL_CONNECTION_POOL * connect_backend(StartupPacket *sp, POOL_CONNECTION * frontend, int pool_id);
 static RETSIGTYPE die(int sig);
@@ -92,7 +94,6 @@ static void get_backends_status(unsigned int *valid_backends, unsigned int *down
 static void validate_backend_connectivity(int front_end_fd);
 static POOL_CONNECTION * get_connection(int front_end_fd, SockAddr *saddr);
 static POOL_CONNECTION_POOL * get_backend_connection(POOL_CONNECTION * frontend);
-static StartupPacket *StartupPacketCopy(StartupPacket *sp);
 static void log_disconnections(char *database, char *username);
 static void print_process_status(char *remote_host, char *remote_port);
 static bool backend_cleanup(POOL_CONNECTION * volatile *frontend, POOL_CONNECTION_POOL * volatile backend, bool frontend_invalid);
@@ -804,33 +805,9 @@ connect_using_existing_connection(POOL_CONNECTION * frontend,
 								  POOL_CONNECTION_POOL * backend,
 								  StartupPacket *sp)
 {
-	int			i,
-				freed = 0;
+	int			i;
 	MemoryContext oldContext;
 	MemoryContext frontend_auth_cxt;
-
-	/*
-	 * Save startup packet info
-	 */
-	// for (i = 0; i < NUM_BACKENDS; i++)
-	// {
-	// 	if (VALID_BACKEND(i))
-	// 	{
-	// 		if (!freed)
-	// 		{
-	// 			oldContext = MemoryContextSwitchTo(TopMemoryContext);
-
-	// 			topmem_sp = StartupPacketCopy(sp);
-	// 			MemoryContextSwitchTo(oldContext);
-
-	// 			pool_free_startup_packet(backend->slots[i]->sp);
-	// 			backend->slots[i]->sp = NULL;
-
-	// 			freed = 1;
-	// 		}
-	// 		backend->slots[i]->sp = topmem_sp;
-	// 	}
-	// }
 
 	/* Reuse existing connection to backend */
 	frontend_auth_cxt = AllocSetContextCreate(CurrentMemoryContext,
@@ -991,38 +968,6 @@ cancel_request(CancelPacket * sp)
 	}
 }
 
-/*
- * Copy startup packet and return it.
- * palloc is used.
- */
-static StartupPacket *
-StartupPacketCopy(StartupPacket *sp)
-{
-	StartupPacket *new_sp;
-
-	/* verify the length first */
-	if (sp->len <= 0 || sp->len >= MAX_STARTUP_PACKET_LENGTH)
-		ereport(ERROR,
-				(errmsg("incorrect packet length (%d)", sp->len)));
-
-	new_sp = (StartupPacket *) palloc0(sizeof(*sp));
-	new_sp->startup_packet = palloc0(sp->len);
-	memcpy(new_sp->startup_packet, sp->startup_packet, sp->len);
-	new_sp->len = sp->len;
-
-	new_sp->major = sp->major;
-	new_sp->minor = sp->minor;
-
-	new_sp->database = pstrdup(sp->database);
-	new_sp->user = pstrdup(sp->user);
-
-	if (new_sp->major == PROTO_MAJOR_V3 && sp->application_name)
-	{
-		/* adjust the application name pointer in new packet */
-		new_sp->application_name = new_sp->startup_packet + (sp->application_name - sp->startup_packet);
-	}
-	return new_sp;
-}
 
 static void
 connect_missing_backend_nodes(StartupPacket *sp, POOL_CONNECTION * frontend, int pool_id)
@@ -1105,10 +1050,6 @@ connect_backend(StartupPacket *sp, POOL_CONNECTION * frontend, int pool_id)
 	PG_TRY();
 	{
 		MemoryContext frontend_auth_cxt, oldContext;
-		// MemoryContext oldContext = MemoryContextSwitchTo(TopMemoryContext);
-		/* Save the startup packet */
-		// GetChildBackendConnection()->sp = StartupPacketCopy(sp);
-		// MemoryContextSwitchTo(oldContext);
 
 		for (i = 0; i < NUM_BACKENDS; i++)
 		{
@@ -1126,8 +1067,8 @@ connect_backend(StartupPacket *sp, POOL_CONNECTION * frontend, int pool_id)
 				send_startup_packet(&CONNECTION_SLOT(backend, i), sp);
 			}
 		}
-		InitializeChildLocalBackendConnection(pool_id, sp);
-		ExportLocalBackendConnectionToPool();
+
+		SetupNewConnectionIntoChild(sp);
 
 		/*
 		 * do authentication stuff
@@ -1136,19 +1077,18 @@ connect_backend(StartupPacket *sp, POOL_CONNECTION * frontend, int pool_id)
 																"frontend_auth",
 																ALLOCSET_DEFAULT_SIZES);
 		oldContext = MemoryContextSwitchTo(frontend_auth_cxt);
-
 		/* do authentication against backend */
 		pool_do_auth(frontend, backend);
 
 		MemoryContextSwitchTo(oldContext);
 		MemoryContextDelete(frontend_auth_cxt);
 
+		ExportLocalBackendConnectionToPool();
+
 	}
 	PG_CATCH();
 	{
 		DiscardBackendConnection(true);
-		// pool_discard_cp(sp->user, sp->database, sp->major);
-		// topmem_sp = NULL;
 		PG_RE_THROW();
 	}
 	PG_END_TRY();
@@ -2002,9 +1942,14 @@ get_connection(int front_end_fd, SockAddr *saddr)
 static POOL_CONNECTION_POOL *
 get_backend_connection(POOL_CONNECTION * frontend)
 {
-	int			found = 0;
 	StartupPacket *sp;
+	int		sockets[MAX_NUM_BACKENDS];
+	int		count, retry_count = 0;
+	LEASE_TYPES	lease_type;
 	POOL_CONNECTION_POOL *backend = GetChildBackendConnection();
+    ProcessInfo *pro_info = pool_get_my_process_info();
+	int pool_availability_wait_usec = pool_config->pool_availability_timeout * 1000;
+
 
 	/* read the startup packet */
 retry_startup:
@@ -2090,20 +2035,18 @@ retry_startup:
 		close_idle_connection(0);
 		pool_initialize_private_backend_status();
 	}
-
-	/*
-	 * if there's no connection associated with user and database, we need to
-	 * connect to the backend and send the startup packet.
-	 */
-
-	/* Ask for a connection from main process*/
-	int		sockets[MAX_NUM_BACKENDS];
-	int		count;
-	LEASE_TYPES	lease_type;
-    ProcessInfo *pro_info = pool_get_my_process_info();
-
-	lease_type = BorrowBackendConnection(parent_link_fd, frontend->database,
-						frontend->username, frontend->protoVersion, 0, &count, sockets);
+	/* Ask for a connection from main process */
+	for(;;)
+	{
+		lease_type = BorrowBackendConnection(parent_link_fd, frontend->database,
+										frontend->username, frontend->protoVersion, 0, &count, sockets);
+		if (lease_type != LEASE_TYPE_NO_AVAILABLE_SLOT || pool_availability_wait_usec <= 0 )
+			break;
+		usleep(POOL_LEASE_RETRY_INTERVAL_USEC);
+		ereport(LOG,(errmsg("No slot available in connection pool, retrying...[%d]", ++retry_count),
+					 errdetail("database:%s user:%s", frontend->database, frontend->username)));
+		pool_availability_wait_usec -= POOL_LEASE_RETRY_INTERVAL_USEC;
+	}
 
 	ImportPoolConnectionIntoChild(pro_info->pool_id, sockets, lease_type);
 
@@ -2128,7 +2071,7 @@ retry_startup:
 	else if (lease_type == LEASE_TYPE_DISCART_AND_CREATE)
 	{
 		DiscardBackendConnection(false);	
-		ClearChildPooledConnectio();
+		ClearChildPooledConnectionData();
 	}
 
 	if (lease_type == LEASE_TYPE_DISCART_AND_CREATE || lease_type == LEASE_TYPE_EMPTY_SLOT_RESERVED)
@@ -2139,13 +2082,11 @@ retry_startup:
 
 	if (lease_type == LEASE_TYPE_NO_AVAILABLE_SLOT)
 	{
-		ereport(LOG,
-				(errmsg("no backend pool available"),
-				 errdetail("database:%s user:%s protoMajor:%d", frontend->database, frontend->username, frontend->protoVersion)));
-		/* No slot available, wait for a slot to be available */
+		ereport(ERROR,
+			(errmsg("no pool slot available for database:%s user:%s protoMajor:%d",frontend->database, frontend->username, frontend->protoVersion),
+				 errhint("Consider increasing the max_pool_size")));
 		// WaitForSlotToBeAvailable(pro_info->pool_id);
 		/* Try again */
-		// return get_backend_connection(frontend);
 		return NULL;
 	}
 	pool_free_startup_packet(sp);

@@ -255,6 +255,7 @@ typedef struct
 										 * client authentication */
 	int			max_pool;		/* max # of connection pool per child */
 	int			max_pool_size;	/* maximum number of pooled backend connections */
+	int			pool_availability_timeout; /* timeout in second to wait for pool connection to be available*/
 	char	   *logdir;			/* logging directory */
 	char	   *log_destination_str;	/* log destination: stderr and/or
 										 * syslog */

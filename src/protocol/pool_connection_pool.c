@@ -1163,15 +1163,13 @@ ExportLocalBackendConnectionToPool(void)
 	else
 		backend_end_point->sp.application_name = NULL;
 
-	// memset(backend_end_point->conn_slots, 0, sizeof(BackendConnection) * MAX_NUM_BACKENDS);
-
 	sock_index = 0;
 	for (i = 0; i < NUM_BACKENDS; i++)
 	{
 		if (VALID_BACKEND(i))
 		{
-			// backend_end_point->conn_slots[i].key = current_backend_con->slots[i].key;
-			// backend_end_point->conn_slots[i].pid = current_backend_con->slots[i].pid;
+			backend_end_point->conn_slots[i].key = current_backend_con->slots[i].key;
+			backend_end_point->conn_slots[i].pid = current_backend_con->slots[i].pid;
 			backend_end_point->backend_ids[sock_index++] = i;
 		}
 		else
@@ -1182,6 +1180,7 @@ ExportLocalBackendConnectionToPool(void)
 		}
 	}
 	backend_end_point->num_sockets = sock_index;
+	GetConnectionPoolEntry(pool_id)->status = POOL_ENTRY_LOADED;
 	return true;
 }
 
@@ -1198,7 +1197,7 @@ ChildBackendConnectionNeedPush(void)
 }
 
 bool
-ClearChildPooledConnectio(void)
+ClearChildPooledConnectionData(void)
 {
 	BackendEndPoint* backend_end_point;
 
@@ -1243,6 +1242,10 @@ DiscardBackendConnection(bool release_pool)
 		{
 			pool_close(current_backend_con->slots[i].con, true);
 			current_backend_con->slots[i].con = NULL;
+			current_backend_con->slots[i].closetime = time(NULL);
+			current_backend_con->slots[i].state = CONNECTION_SLOT_EMPTY;
+			current_backend_con->slots[i].key = -1;
+			current_backend_con->slots[i].pid = -1;
 		}
 	}
 	/* Free Startup Packet */
@@ -1257,7 +1260,6 @@ DiscardBackendConnection(bool release_pool)
 		pfree(current_backend_con->sp);
 		current_backend_con->sp = NULL;
 	}
-	memset(current_backend_con, 0, sizeof(ChildBackendConnection));
 	if (!release_pool)
 	{
 		/* Restore the pool_id */
@@ -1266,22 +1268,16 @@ DiscardBackendConnection(bool release_pool)
 	return true;
 }
 
+/* Should already have the pool entry linked */
 bool
-InitializeChildLocalBackendConnection(int pool_id, StartupPacket* sp)
+SetupNewConnectionIntoChild(StartupPacket* sp)
 {
 	ChildBackendConnection* current_backend_con = GetChildBackendConnection();
-	BackendEndPoint* backend_end_point = NULL;
 
 	if (processType != PT_CHILD)
 		return false;
-	
-	if (pool_id > 0)
-		backend_end_point = GetBackendEndPoint(pool_id);
 
-	current_backend_con->pool_id = pool_id;
-	current_backend_con->backend_end_point = backend_end_point;
-	current_backend_con->borrowed = false;
-
+	ereport(DEBUG1,(errmsg("SetupNewConnectionIntoChild pool_id:%d", current_backend_con->pool_id)));
 	import_startup_packet_into_child(sp, NULL);
 
 	/* Slots should already have been initialized by Connect backend */
@@ -1295,13 +1291,19 @@ bool
 ImportPoolConnectionIntoChild(int pool_id, int *sockets, LEASE_TYPES lease_type)
 {
 	int i;
+	int num_sockets;
+	int *backend_ids;
 	BackendEndPoint* backend_end_point = GetBackendEndPoint(pool_id);
 	ChildBackendConnection* current_backend_con = GetChildBackendConnection();
-	int num_sockets = backend_end_point->num_sockets;
-	int *backend_ids = backend_end_point->backend_ids;
 
 	if (backend_end_point == NULL)
 		return false;
+
+	ereport(DEBUG2,
+		(errmsg("ImportPoolConnectionIntoChild pool_id:%d backend_end_point:%p LeaseType:%d", pool_id,backend_end_point,lease_type)));
+
+	num_sockets = backend_end_point->num_sockets;
+	backend_ids = backend_end_point->backend_ids;
 
 	current_backend_con->pool_id = pool_id;
 	current_backend_con->backend_end_point = backend_end_point;
@@ -1353,7 +1355,8 @@ ImportPoolConnectionIntoChild(int pool_id, int *sockets, LEASE_TYPES lease_type)
 				 * We need to update connect the backend, push back the socket to global pool
 				 * and also sync the status in the global pool
 				 */
-				ereport(LOG,(errmsg("Backend %d was down when pool was created but now it is up :%d", i,current_backend_con->slots[i].state)));
+				ereport(LOG,
+					(errmsg("Backend %d was down when pool was created but now it is up :%d", i,current_backend_con->slots[i].state)));
 				if (ConnectBackendSlotSocket(i) == false)
 				{
 					/* set down status to local status area */
@@ -1420,14 +1423,19 @@ GetPooledConnectionForLending(char *user, char *database, int protoMajor, LEASE_
 {
 	int i;
 	int free_pool_slot = -1;
+	int discard_pool_slot = -1;
+	bool	found_good_victum = false;
+
 	ereport(DEBUG2,
 		(errmsg("Finding for user:%s database:%s protoMajor:%d", user, database, protoMajor)));
 
 	for (i = 0; i < pool_config->max_pool_size; i++)
 	{
-		ereport(DEBUG2,(errmsg("POOL:%d, STATUS:%d [%s:%s]",i,ConnectionPool[i].status,
-						ConnectionPool[i].endPoint.database,
-						ConnectionPool[i].endPoint.user)));
+		ereport(DEBUG2,
+				(errmsg("POOL:%d, STATUS:%d [%s:%s]",i,ConnectionPool[i].status,
+													ConnectionPool[i].endPoint.database,
+													ConnectionPool[i].endPoint.user)));
+
 		if (ConnectionPool[i].status == POOL_ENTRY_CONNECTED &&
 			ConnectionPool[i].borrower_pid <= 0 &&
 			ConnectionPool[i].endPoint.sp.major == protoMajor )
@@ -1442,9 +1450,33 @@ GetPooledConnectionForLending(char *user, char *database, int protoMajor, LEASE_
 					return i;
 				}
 		}
-		else if (free_pool_slot == -1 && ConnectionPool[i].status == POOL_ENTRY_EMPTY)
+		else if (free_pool_slot == -1 && ConnectionPool[i].status == POOL_ENTRY_EMPTY
+									  && ConnectionPool[i].borrower_pid <= 0)
 			free_pool_slot = i;
-
+		/* Alos try calculating the victum in case we failed to find even a free connection */
+		if (free_pool_slot == -1 && found_good_victum == false)
+		{
+			if (ConnectionPool[i].status == POOL_ENTRY_CONNECTED && 
+			ConnectionPool[i].borrower_pid <= 0)
+			{
+				if (ConnectionPool[i].need_cleanup)
+				{
+					discard_pool_slot = i;
+					found_good_victum = true;
+				}
+				else if (discard_pool_slot == -1)
+				{
+					discard_pool_slot = i;
+				}
+				else
+				{
+					/* We already have a discard entry. see which one is better
+					 * TODO we can improve this logic */
+					if (ConnectionPool[i].leased_count < ConnectionPool[discard_pool_slot].leased_count)
+						discard_pool_slot = i;
+				}
+			}
+		}
 	}
 
 	/* No pooled connection found. Return empty slot */
@@ -1453,7 +1485,11 @@ GetPooledConnectionForLending(char *user, char *database, int protoMajor, LEASE_
 		*lease_type = LEASE_TYPE_EMPTY_SLOT_RESERVED;
 		return free_pool_slot;
 	}
-
+	else if (discard_pool_slot > -1)
+	{
+		*lease_type = LEASE_TYPE_DISCART_AND_CREATE;
+		return discard_pool_slot;
+	}
 	/* TODO Find the pooled entry that can be discarded and re-used */
 	ereport(LOG,
 		(errmsg("No pooled connection for user:%s database:%s protoMajor:%d, And No Free slot available ", user, database, protoMajor)));
@@ -1471,7 +1507,6 @@ LeasePooledConnectionToChild(IPC_Endpoint* ipc_endpoint)
 	LEASE_TYPES		lease_type = LEASE_TYPE_LEASE_FAILED;
 	int				pool_id = -1;
 	bool 			ret;
-
 
 	if (processType != PT_MAIN)
 		return false;
@@ -1499,33 +1534,6 @@ LeasePooledConnectionToChild(IPC_Endpoint* ipc_endpoint)
 				(errmsg("Failed to register (pool_id:%d) lease type:%d to child:%d", pool_id, lease_type, ipc_endpoint->child_pid)));
 			lease_type = LEASE_TYPE_LEASE_FAILED;
 		}
-
-		ret = InformChildAboutLeaseStatus(ipc_endpoint->child_link, lease_type);
-		if (ret == false)
-		{
-			ereport(LOG,
-				(errmsg("Failed to send (pool_id:%d) lease type:%d to child:%d", pool_id, lease_type, ipc_endpoint->child_pid)));
-			unregister_lease(pool_id, ipc_endpoint);
-			return false;
-		}
-
-		if (lease_type == LEASE_TYPE_READY_TO_USE || lease_type == LEASE_TYPE_DISCART_AND_CREATE)
-		{
-			int *sockets = NULL;
-			int num_sockets = 0;
-			get_sockets_array(&ConnectionPool[pool_id].endPoint, &sockets, &num_sockets, true);
-			if (sockets && num_sockets > 0)
-			{
-				ret = TransferSocketsBetweenProcesses(ipc_endpoint->child_link, num_sockets, sockets);
-				pfree(sockets);
-				if (ret == false)
-					unregister_lease(pool_id, ipc_endpoint);
-				return ret;
-			}
-			else
-				ereport(LOG,
-					(errmsg("No socket found to transfer to to child:%d", ipc_endpoint->child_pid)));
-		}
 	}
 	else
 	{
@@ -1533,7 +1541,33 @@ LeasePooledConnectionToChild(IPC_Endpoint* ipc_endpoint)
 			(errmsg("No pooled connection for user:%s database:%s protoMajor:%d", child_proc_info->user,
 											child_proc_info->database,
 											child_proc_info->major)));
+	}
+
+	ret = InformLeaseStatusToChild(ipc_endpoint->child_link, lease_type);
+	if (ret == false)
+	{
+		ereport(LOG,
+			(errmsg("Failed to send (pool_id:%d) lease type:%d to child:%d", pool_id, lease_type, ipc_endpoint->child_pid)));
+		unregister_lease(pool_id, ipc_endpoint);
 		return false;
+	}
+
+	if (lease_type == LEASE_TYPE_READY_TO_USE || lease_type == LEASE_TYPE_DISCART_AND_CREATE)
+	{
+		int *sockets = NULL;
+		int num_sockets = 0;
+		get_sockets_array(&ConnectionPool[pool_id].endPoint, &sockets, &num_sockets, true);
+		if (sockets && num_sockets > 0)
+		{
+			ret = TransferSocketsBetweenProcesses(ipc_endpoint->child_link, num_sockets, sockets);
+			pfree(sockets);
+			if (ret == false)
+				unregister_lease(pool_id, ipc_endpoint);
+			return ret;
+		}
+		else
+			ereport(LOG,
+				(errmsg("No socket found to transfer to to child:%d", ipc_endpoint->child_pid)));
 	}
 
 	return ret;
@@ -1685,7 +1719,7 @@ get_sockets_array(BackendEndPoint*  backend_endpoint, int **sockets, int* num_so
 	}
 
 	*sockets = socks;
-	ereport(DEBUG2,(errmsg("we have %d sockets to push",*num_sockets)));
+	ereport(DEBUG2,(errmsg("we have %d %s sockets to push",*num_sockets,pooled_socks?"pooled":"child")));
 	return *num_sockets;
 }
 
@@ -1729,6 +1763,7 @@ GetBackendEndPointForCancelPacket(CancelPacket* cp)
 		if (ConnectionPool[i].status == POOL_ENTRY_EMPTY ||
 			ConnectionPool[i].endPoint.num_sockets <= 0)
 			continue;
+
 		for(con_slot = 0; con_slot < ConnectionPool[i].endPoint.num_sockets; con_slot++)
 		{
 			BackendConnection* c = &ConnectionPool[i].endPoint.conn_slots[con_slot];
