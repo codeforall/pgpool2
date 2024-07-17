@@ -281,7 +281,7 @@ do_child(int *fds, int ipc_fd)
 			pool_session_context_destroy();
 
 			/* Mark this connection pool is not connected from frontend */
-			pool_coninfo_unset_frontend_connected();
+			// pool_coninfo_unset_frontend_connected();
 
 			/* increment queries counter if necessary */
 			if (pool_config->child_max_connections > 0)
@@ -478,8 +478,8 @@ do_child(int *fds, int ipc_fd)
 		pool_session_context_destroy();
 
 		/* Mark this connection pool is not connected from frontend */
-		pool_coninfo_unset_frontend_connected();
-		update_pooled_connection_count();
+		// pool_coninfo_unset_frontend_connected();
+		// update_pooled_connection_count();
 		accepted = 0;
 		connection_count_down();
 		if (pool_config->log_disconnections)
@@ -845,7 +845,8 @@ connect_using_existing_connection(POOL_CONNECTION * frontend,
 					 * "SET application_name" command if the backend goes
 					 * down.
 					 */
-					pool_init_params(&backend->slots[i].con->params);
+					pool_param_debug_print(&backend->backend_end_point->params);
+					// pool_init_params(&backend->backend_end_point->params);
 
 					PG_TRY();
 					{
@@ -865,7 +866,7 @@ connect_using_existing_connection(POOL_CONNECTION * frontend,
 				}
 			}
 			
-			pool_add_param(&MAIN(backend)->params, "application_name", sp->application_name);
+			pool_add_param(&backend->backend_end_point->params, "application_name", sp->application_name);
 			set_application_name_with_string(sp->application_name);
 		}
 
@@ -1283,7 +1284,7 @@ send_params(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend)
 				sendlen;
 
 	index = 0;
-	while (pool_get_param(&MAIN(backend)->params, index++, &name, &value) == 0)
+	while (pool_get_param(&backend->backend_end_point->params, index++, &name, &value) == 0)
 	{
 		pool_write(frontend, "S", 1);
 		len = sizeof(sendlen) + strlen(name) + 1 + strlen(value) + 1;

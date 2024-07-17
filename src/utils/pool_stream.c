@@ -130,7 +130,7 @@ pool_close(POOL_CONNECTION * cp, bool close_socket)
 		pfree(cp->buf2);
 	if (cp->buf3)
 		pfree(cp->buf3);
-	pool_discard_params(&cp->params);
+	// pool_discard_params(&cp->params);
 
 	pool_ssl_close(cp);
 

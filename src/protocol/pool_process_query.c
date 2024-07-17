@@ -968,11 +968,11 @@ ParameterStatus(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend)
 
 				parambuf = palloc(len);
 				memcpy(parambuf, p, len);
-				pool_add_param(&CONNECTION(backend, i)->params, name, value);
+				pool_add_param(&backend->backend_end_point->params, name, value);
 
 				if (!strcmp("application_name", name))
 				{
-					set_application_name_with_string(pool_find_name(&CONNECTION(backend, i)->params, name, &pos));
+					set_application_name_with_string(pool_find_name(&backend->backend_end_point->params, name, &pos));
 				}
 			}
 			else
@@ -987,7 +987,7 @@ ParameterStatus(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend)
 			}
 
 #ifdef DEBUG
-			pool_param_debug_print(&MAIN(backend)->params);
+			pool_param_debug_print(&backend->backend_end_point->params);
 #endif
 		}
 	}
@@ -3457,11 +3457,11 @@ read_kind_from_backend(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backen
 						if (IS_MAIN_NODE_ID(i))
 						{
 							int		pos;
-							pool_add_param(&CONNECTION(backend, i)->params, p, value);
+							pool_add_param(&backend->backend_end_point->params, p, value);
 
 							if (!strcmp("application_name", p))
 							{
-								set_application_name_with_string(pool_find_name(&CONNECTION(backend, i)->params, p, &pos));
+								set_application_name_with_string(pool_find_name(&backend->backend_end_point->params, p, &pos));
 							}
 						}
 						/* forward to frontend */
