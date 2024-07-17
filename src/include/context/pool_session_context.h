@@ -178,7 +178,7 @@ typedef struct
 {
 	POOL_PROCESS_CONTEXT *process_context;	/* belonging process */
 	POOL_CONNECTION *frontend;	/* connection to frontend */
-	POOL_CONNECTION_POOL *backend;	/* connection to backends */
+	ChildClusterConnection *backend;	/* connection to backends */
 
 	/*
 	 * If true, we are waiting for backend response.  For SELECT this flags
@@ -322,7 +322,7 @@ typedef struct
 													 * multi-statement-query */
 }			POOL_SESSION_CONTEXT;
 
-extern void pool_init_session_context(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend);
+extern void pool_init_session_context(POOL_CONNECTION * frontend, ChildClusterConnection * backend);
 extern void pool_session_context_destroy(void);
 extern POOL_SESSION_CONTEXT * pool_get_session_context(bool noerror);
 extern void pool_select_new_load_balance_node(bool noerror);

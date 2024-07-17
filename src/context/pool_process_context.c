@@ -182,7 +182,7 @@ pool_unset_connection_will_be_terminated(BackendConnection * backend_connection)
 void
 pool_coninfo_set_frontend_connected(void)
 {
-	ChildBackendConnection* backend_con = GetChildBackendConnection();
+	ChildClusterConnection *backend_con = GetChildClusterConnection();
 	if (!backend_con->backend_end_point)
 	{
 			elog(WARNING, "failed to get pooled connection for child process while marking the frontend is connected for pool");
@@ -200,7 +200,7 @@ pool_coninfo_set_frontend_connected(void)
 void
 pool_coninfo_unset_frontend_connected(void)
 {
-	ChildBackendConnection* backend_con = GetChildBackendConnection();
+	ChildClusterConnection *backend_con = GetChildClusterConnection();
 	if (!backend_con->backend_end_point)
 	{
 			elog(WARNING, "failed to get pooled connection for child process while marking the frontend is not connected for pool");

@@ -69,7 +69,7 @@
 #include "watchdog/wd_internal_commands.h"
 #include "watchdog/watchdog.h"
 
-static POOL_CONNECTION_POOL_SLOT * slots[MAX_NUM_BACKENDS];
+static ChildLocalBackendConnection *slots[MAX_NUM_BACKENDS];
 static volatile sig_atomic_t reload_config_request = 0;
 static volatile sig_atomic_t restart_request = 0;
 
@@ -740,8 +740,7 @@ reload_config(void)
  * Caller must prepare memory for POOL_SELECT_RESULT and pass it as "res". It
  * is guaranteed that no exception occurs within this function.
  */
-int
-get_query_result(POOL_CONNECTION_POOL_SLOT * *slots, int backend_id, char *query, POOL_SELECT_RESULT * *res)
+int get_query_result(ChildLocalBackendConnection **slots, int backend_id, char *query, POOL_SELECT_RESULT **res)
 {
 	int			sts = -1;
 	MemoryContext oldContext = CurrentMemoryContext;

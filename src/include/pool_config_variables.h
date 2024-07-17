@@ -342,10 +342,10 @@ extern bool set_config_options(ConfigVariable *head_p,
 
 
 #ifndef POOL_PRIVATE
-extern bool report_config_variable(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend, const char *var_name);
-extern bool report_all_variables(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend);
-extern bool set_config_option_for_session(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend, const char *name, const char *value);
-bool		reset_all_variables(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend);
+extern bool report_config_variable(POOL_CONNECTION * frontend, ChildClusterConnection * backend, const char *var_name);
+extern bool report_all_variables(POOL_CONNECTION * frontend, ChildClusterConnection * backend);
+extern bool set_config_option_for_session(POOL_CONNECTION * frontend, ChildClusterConnection * backend, const char *name, const char *value);
+bool		reset_all_variables(POOL_CONNECTION * frontend, ChildClusterConnection * backend);
 #endif
 
 #endif							/* POOL_CONFIG_VARIABLES_H */

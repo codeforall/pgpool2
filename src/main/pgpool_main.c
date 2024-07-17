@@ -185,7 +185,7 @@ static void system_will_go_down(int code, Datum arg);
 static char *process_name_from_pid(pid_t pid);
 static void sync_backend_from_watchdog(void);
 static void update_backend_quarantine_status(void);
-static int	get_server_version(POOL_CONNECTION_POOL_SLOT * *slots, int node_id);
+static int get_server_version(ChildLocalBackendConnection **slots, int node_id);
 static void get_info_from_conninfo(char *conninfo, char *host, int hostlen, char *port, int portlen);
 
 /*
@@ -2473,7 +2473,7 @@ trigger_failover_command(int node, const char *command_line,
 static POOL_NODE_STATUS pool_node_status[MAX_NUM_BACKENDS];
 
 POOL_NODE_STATUS *
-verify_backend_node_status(POOL_CONNECTION_POOL_SLOT * *slots)
+verify_backend_node_status(ChildLocalBackendConnection **slots)
 {
 	POOL_SELECT_RESULT *res;
 	int			num_primaries = 0;
@@ -2763,7 +2763,7 @@ static int
 find_primary_node(void)
 {
 	BackendInfo *bkinfo;
-	POOL_CONNECTION_POOL_SLOT *slots[MAX_NUM_BACKENDS];
+	ChildLocalBackendConnection *slots[MAX_NUM_BACKENDS];
 	int			i;
 	POOL_NODE_STATUS *status;
 	int			primary = -1;
@@ -3966,7 +3966,7 @@ set_node_status_changed_in_pool(unsigned char request_details, bool primary_chan
  * version number is in the static memory area.
  */
 static int
-get_server_version(POOL_CONNECTION_POOL_SLOT * *slots, int node_id)
+get_server_version(ChildLocalBackendConnection **slots, int node_id)
 {
 	static int	server_versions[MAX_NUM_BACKENDS];
 

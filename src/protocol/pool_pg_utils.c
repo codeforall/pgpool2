@@ -47,11 +47,11 @@ static void si_leave_critical_region(void);
 /*
  * create a persistent connection
  */
-POOL_CONNECTION_POOL_SLOT *
+ChildLocalBackendConnection *
 make_persistent_db_connection(
-							  int db_node_id, char *hostname, int port, char *dbname, char *user, char *password, bool retry)
+	int db_node_id, char *hostname, int port, char *dbname, char *user, char *password, bool retry)
 {
-	POOL_CONNECTION_POOL_SLOT *cp;
+	ChildLocalBackendConnection *cp;
 	int			fd;
 
 #define MAX_USER_AND_DATABASE	1024
@@ -68,7 +68,7 @@ make_persistent_db_connection(
 				len1;
 	StartupPacket *sp;
 
-	cp = palloc0(sizeof(POOL_CONNECTION_POOL_SLOT));
+	cp = palloc0(sizeof(ChildLocalBackendConnection));
 	startup_packet = palloc0(sizeof(*startup_packet));
 	startup_packet->protoVersion = htonl(0x00030000);	/* set V3 proto
 														 * major/minor */
@@ -176,11 +176,11 @@ make_persistent_db_connection(
  * make_persistent_db_connection_noerror() is a wrapper over
  * make_persistent_db_connection() which does not ereports in case of an error
  */
-POOL_CONNECTION_POOL_SLOT *
+ChildLocalBackendConnection *
 make_persistent_db_connection_noerror(
-									  int db_node_id, char *hostname, int port, char *dbname, char *user, char *password, bool retry)
+	int db_node_id, char *hostname, int port, char *dbname, char *user, char *password, bool retry)
 {
-	POOL_CONNECTION_POOL_SLOT *slot = NULL;
+	ChildLocalBackendConnection *slot = NULL;
 	MemoryContext oldContext = CurrentMemoryContext;
 
 	PG_TRY();
@@ -235,8 +235,7 @@ free_startup_packet(StartupPacket* sp)
  * Discard connection and memory allocated by
  * make_persistent_db_connection().
  */
-void
-discard_persistent_db_connection(POOL_CONNECTION_POOL_SLOT * cp)
+void discard_persistent_db_connection(ChildLocalBackendConnection *cp)
 {
 	int			len;
 
@@ -264,8 +263,7 @@ discard_persistent_db_connection(POOL_CONNECTION_POOL_SLOT * cp)
 /*
  * send startup packet
  */
-void
-send_startup_packet(POOL_CONNECTION_POOL_SLOT * cp, StartupPacket *sp)
+void send_startup_packet(ChildLocalBackendConnection *cp, StartupPacket *sp)
 {
 	int			len;
 
@@ -681,7 +679,7 @@ select_load_balancing_node(void)
  *
  */
 PGVersion *
-Pgversion(POOL_CONNECTION_POOL * backend)
+Pgversion(ChildClusterConnection * backend)
 {
 #define VERSION_BUF_SIZE	10
 	static	PGVersion	pgversion;

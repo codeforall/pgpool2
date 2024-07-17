@@ -31,11 +31,11 @@ extern void pool_init_cp(int parent_link_fd);
 bool DiscardBackendConnection(bool release_pool);
 bool ClearChildPooledConnectionData(void);
 
-extern ChildBackendConnection* GetChildBackendConnection(void);
+extern ChildClusterConnection *GetChildClusterConnection(void);
 extern bool ConnectBackendSocktes(void);
 extern void pool_discard_cp(char *user, char *database, int protoMajor);
 extern void pool_backend_timer(void);
-extern void pool_connection_pool_timer(POOL_CONNECTION_POOL * backend);
+extern void pool_connection_pool_timer(ChildClusterConnection * backend);
 extern RETSIGTYPE pool_backend_timer_handler(int sig);
 extern int	connect_inet_domain_socket(int slot, bool retry);
 extern int	connect_unix_domain_socket(int slot, bool retry);
@@ -44,7 +44,7 @@ extern int	connect_unix_domain_socket_by_port(int port, char *socket_dir, bool r
 extern int	pool_pool_index(void);
 extern void close_all_backend_connections(void);
 extern void update_pooled_connection_count(void);
-extern int	in_use_backend_id(POOL_CONNECTION_POOL *pool);
+extern int	in_use_backend_id(ChildClusterConnection *pool);
 
 
 /* Global connection pool */
@@ -66,16 +66,11 @@ extern bool InstallSocketsInConnectionPool(ConnectionPoolEntry* pool_entry, int 
 extern BackendEndPoint* GetBackendEndPoint(int pool_id);
 extern ConnectionPoolEntry* GetConnectionPoolEntry(int pool_id);
 extern ConnectionPoolEntry* GetChildConnectionPoolEntry(void);
-extern bool ChildBackendConnectionNeedPush(void);
+extern bool ChildClusterConnectionNeedPush(void);
 extern bool ReleasePooledConnection(ConnectionPoolEntry* pool_entry, IPC_Endpoint* ipc_endpoint, bool need_cleanup, bool discard);
 
 extern BackendConnection* GetBackendConnectionForBackendPID(int backend_pid, int *backend_node_id);
 extern BackendEndPoint* GetBackendEndPointForCancelPacket(CancelPacket* cp);
-extern void ClearChildBackendConnection(void);
-
-// #define CONNECTION_SLOT(slot) ((GetChildBackendConnection())->slots[(slot)])
-// #define CONNECTION(slot) (CONNECTION_SLOT(slot)->connection)
-// #define MAIN_CONNECTION() ((GetChildBackendConnection())->slots[MAIN_NODE_ID])
-// #define MAIN() MAIN_CONNECTION()->connection
+extern void ClearChildClusterConnection(void);
 
 #endif /* pool_connection_pool_h */

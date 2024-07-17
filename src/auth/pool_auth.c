@@ -63,7 +63,7 @@
 
 static POOL_STATUS pool_send_backend_key_data(POOL_CONNECTION * frontend, int pid, int key, int protoMajor);
 static int	do_clear_text_password(POOL_CONNECTION * backend, POOL_CONNECTION * frontend, int reauth, int protoMajor);
-static void pool_send_auth_fail(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * cp);
+static void pool_send_auth_fail(POOL_CONNECTION * frontend, ChildClusterConnection * cp);
 static int	do_crypt(POOL_CONNECTION * backend, POOL_CONNECTION * frontend, int reauth, int protoMajor);
 static int do_md5(POOL_CONNECTION * backend, POOL_CONNECTION * frontend, int reauth, int protoMajor,
 	   char *storedPassword, PasswordType passwordType);
@@ -90,9 +90,8 @@ static bool get_auth_password(POOL_CONNECTION * backend, POOL_CONNECTION * front
  * Do authentication. Assuming the caller is
  * make_persistent_db_connection() when.
  */
-void
-connection_do_auth(ChildBackendConnection* backend_con, int slot_no,
-					POOL_CONNECTION_POOL_SLOT * con_slot, POOL_CONNECTION *frontend, char *password, StartupPacket *sp)
+void connection_do_auth(ChildClusterConnection *backend_con, int slot_no,
+						ChildLocalBackendConnection *con_slot, POOL_CONNECTION *frontend, char *password, StartupPacket *sp)
 {
 	char		kind;
 	int			length;
@@ -104,7 +103,7 @@ connection_do_auth(ChildBackendConnection* backend_con, int slot_no,
 	bool		keydata_done;
 	bool		pooled_con = false;
 	PasswordType passwordType = PASSWORD_TYPE_UNKNOWN;
-	ChildBackendConnectionSlot* cp = backend_con? cp = &backend_con->slots[slot_no] : con_slot;
+	ChildLocalBackendConnection *cp = backend_con ? cp = &backend_con->slots[slot_no] : con_slot;
 
 	/*
 	 * read kind expecting 'R' packet (authentication response)
@@ -388,7 +387,7 @@ connection_do_auth(ChildBackendConnection* backend_con, int slot_no,
  * 0.
 */
 int
-pool_do_auth(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * cp)
+pool_do_auth(POOL_CONNECTION * frontend, ChildClusterConnection * cp)
 {
 	signed char kind;
 	int			pid;
@@ -861,7 +860,7 @@ pool_do_auth(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * cp)
 * do re-authentication for reused connection. if success return 0 otherwise throws ereport.
 */
 int
-pool_do_reauth(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * cp)
+pool_do_reauth(POOL_CONNECTION * frontend, ChildClusterConnection * cp)
 {
 	int			protoMajor = MAJOR(cp);
 	int			authkind = GetAuthKindForCurrentPoolBackendConnection();
@@ -922,7 +921,7 @@ pool_do_reauth(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * cp)
 * send authentication failure message text to frontend
 */
 static void
-pool_send_auth_fail(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * cp)
+pool_send_auth_fail(POOL_CONNECTION * frontend, ChildClusterConnection * cp)
 {
 	int			messagelen;
 	char	   *errmessage;

@@ -392,7 +392,7 @@ get_ps_display(int *displen)
  * Show ps idle status
  */
 void
-pool_ps_idle_display(POOL_CONNECTION_POOL * backend)
+pool_ps_idle_display(ChildClusterConnection * backend)
 {
 	StartupPacket *sp;
 	char		psbuf[1024];

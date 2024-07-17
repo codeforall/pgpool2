@@ -80,20 +80,20 @@
 #define IDLE_IN_TRANSACTION_SESSION_TIMEOUT_ERROR_CODE "25P03"
 #define IDLE_SESSION_TIMEOUT_ERROR_CODE "57P05"
 
-static int	reset_backend(POOL_CONNECTION_POOL * backend, int qcnt);
+static int	reset_backend(ChildClusterConnection * backend, int qcnt);
 static char *get_insert_command_table_name(InsertStmt *node);
-static bool is_cache_empty(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend);
+static bool is_cache_empty(POOL_CONNECTION * frontend, ChildClusterConnection * backend);
 static bool is_panic_or_fatal_error(char *message, int major);
 static int	extract_message(POOL_CONNECTION * backend, char *error_code, int major, char class, bool unread);
 static int	detect_postmaster_down_error(POOL_CONNECTION * backend, int major);
 static bool is_internal_transaction_needed(Node *node);
 static bool pool_has_insert_lock(void);
-static POOL_STATUS add_lock_target(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend, char *table);
-static bool has_lock_target(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend, char *table, bool for_update);
-static POOL_STATUS insert_oid_into_insert_lock(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend, char *table);
-static POOL_STATUS read_packets_and_process(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend, int reset_request, int *state, short *num_fields, bool *cont);
+static POOL_STATUS add_lock_target(POOL_CONNECTION * frontend, ChildClusterConnection * backend, char *table);
+static bool has_lock_target(POOL_CONNECTION * frontend, ChildClusterConnection * backend, char *table, bool for_update);
+static POOL_STATUS insert_oid_into_insert_lock(POOL_CONNECTION * frontend, ChildClusterConnection * backend, char *table);
+static POOL_STATUS read_packets_and_process(POOL_CONNECTION * frontend, ChildClusterConnection * backend, int reset_request, int *state, short *num_fields, bool *cont);
 static bool is_all_standbys_command_complete(unsigned char *kind_list, int num_backends, int main_node);
-static bool pool_process_notice_message_from_one_backend(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend, int backend_idx, char kind);
+static bool pool_process_notice_message_from_one_backend(POOL_CONNECTION * frontend, ChildClusterConnection * backend, int backend_idx, char kind);
 
 /*
  * Main module for query processing
@@ -101,7 +101,7 @@ static bool pool_process_notice_message_from_one_backend(POOL_CONNECTION * front
  */
 POOL_STATUS
 pool_process_query(POOL_CONNECTION * frontend,
-				   POOL_CONNECTION_POOL * backend,
+				   ChildClusterConnection * backend,
 				   int reset_request)
 {
 	short		num_fields = 0; /* the number of fields in a row (V2 protocol) */
@@ -615,7 +615,7 @@ wait_for_query_response(POOL_CONNECTION * frontend, POOL_CONNECTION * backend, i
  * Extended query protocol has to send Flush message.
  */
 POOL_STATUS
-send_extended_protocol_message(POOL_CONNECTION_POOL * backend,
+send_extended_protocol_message(ChildClusterConnection * backend,
 							   int node_id, char *kind,
 							   int len, char *string)
 {
@@ -661,7 +661,7 @@ synchronize(POOL_CONNECTION * cp)
  * valid backends might be changed by failover/failback.
  */
 void
-pool_send_frontend_exits(POOL_CONNECTION_POOL * backend)
+pool_send_frontend_exits(ChildClusterConnection * backend)
 {
 	int			len;
 	int			i;
@@ -704,7 +704,7 @@ pool_send_frontend_exits(POOL_CONNECTION_POOL * backend)
 
 POOL_STATUS
 SimpleForwardToFrontend(char kind, POOL_CONNECTION * frontend,
-						POOL_CONNECTION_POOL * backend)
+						ChildClusterConnection * backend)
 {
 	int			len,
 				len1 = 0;
@@ -847,7 +847,7 @@ SimpleForwardToFrontend(char kind, POOL_CONNECTION * frontend,
 
 POOL_STATUS
 SimpleForwardToBackend(char kind, POOL_CONNECTION * frontend,
-					   POOL_CONNECTION_POOL * backend,
+					   ChildClusterConnection * backend,
 					   int len, char *contents)
 {
 	int			sendlen;
@@ -907,7 +907,7 @@ SimpleForwardToBackend(char kind, POOL_CONNECTION * frontend,
  * Handle parameter status message
  */
 POOL_STATUS
-ParameterStatus(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend)
+ParameterStatus(POOL_CONNECTION * frontend, ChildClusterConnection * backend)
 {
 	int			len,
 				len1 = 0;
@@ -1032,7 +1032,7 @@ reset_connection(void)
  * 0: no query was issued 1: a query was issued 2: no more queries remain -1: error
  */
 static int
-reset_backend(POOL_CONNECTION_POOL * backend, int qcnt)
+reset_backend(ChildClusterConnection * backend, int qcnt)
 {
 	char	   *query;
 	int			qn;
@@ -1747,7 +1747,7 @@ do_error_command(POOL_CONNECTION * backend, int major)
  * than main node to ket them go into abort status.
  */
 void
-do_error_execute_command(POOL_CONNECTION_POOL * backend, int node_id, int major)
+do_error_execute_command(ChildClusterConnection * backend, int node_id, int major)
 {
 	char		kind;
 	char	   *string;
@@ -2493,7 +2493,7 @@ do_query(POOL_CONNECTION * backend, char *query, POOL_SELECT_RESULT * *result, i
  * 3: row lock against insert_lock table is required
  */
 int
-need_insert_lock(POOL_CONNECTION_POOL * backend, char *query, Node *node)
+need_insert_lock(ChildClusterConnection * backend, char *query, Node *node)
 {
 /*
  * Query to know if the target table has SERIAL column or not.
@@ -2613,7 +2613,7 @@ need_insert_lock(POOL_CONNECTION_POOL * backend, char *query, Node *node)
  * [ADMIN] 'SGT DETAIL: Could not open file "pg_clog/05DC": ...
  */
 POOL_STATUS
-insert_lock(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend, char *query, InsertStmt *node, int lock_kind)
+insert_lock(POOL_CONNECTION * frontend, ChildClusterConnection * backend, char *query, InsertStmt *node, int lock_kind)
 {
 	char	   *table;
 	int			len = 0;
@@ -2888,7 +2888,7 @@ pool_has_insert_lock(void)
 
 	bool		result;
 	static POOL_RELCACHE * relcache;
-	POOL_CONNECTION_POOL *backend;
+	ChildClusterConnection *backend;
 
 	backend = pool_get_session_context(false)->backend;
 
@@ -2915,7 +2915,7 @@ pool_has_insert_lock(void)
  * Return POOL_CONTINUE if the row is inserted successfully
  * or the row already exists, the others return POOL_ERROR.
  */
-static POOL_STATUS add_lock_target(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend, char *table)
+static POOL_STATUS add_lock_target(POOL_CONNECTION * frontend, ChildClusterConnection * backend, char *table)
 {
 	/*
 	 * lock the row where reloid is 0 to avoid "duplicate key violates..."
@@ -2976,7 +2976,7 @@ static POOL_STATUS add_lock_target(POOL_CONNECTION * frontend, POOL_CONNECTION_P
  */
 static bool
 has_lock_target(POOL_CONNECTION * frontend,
-				POOL_CONNECTION_POOL * backend,
+				ChildClusterConnection * backend,
 				char *table, bool lock)
 {
 	char	   *suffix;
@@ -3017,7 +3017,7 @@ has_lock_target(POOL_CONNECTION * frontend,
  * Insert the oid of the specified table into insert_lock table.
  */
 static POOL_STATUS insert_oid_into_insert_lock(POOL_CONNECTION * frontend,
-											   POOL_CONNECTION_POOL * backend,
+											   ChildClusterConnection * backend,
 											   char *table)
 {
 	char		qbuf[QUERY_STRING_BUFFER_LEN];
@@ -3083,7 +3083,7 @@ is_drop_database(Node *node)
  * check if any pending data remains in backend.
 */
 bool
-is_backend_cache_empty(POOL_CONNECTION_POOL * backend)
+is_backend_cache_empty(ChildClusterConnection * backend)
 {
 	int			i;
 
@@ -3110,7 +3110,7 @@ is_backend_cache_empty(POOL_CONNECTION_POOL * backend)
  * check if any pending data remains.
 */
 static bool
-is_cache_empty(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend)
+is_cache_empty(POOL_CONNECTION * frontend, ChildClusterConnection * backend)
 {
 	/* Are we suspending reading from frontend? */
 	if (!pool_is_suspend_reading_from_frontend())
@@ -3218,7 +3218,7 @@ check_copy_from_stdin(Node *node)
  * read kind from one backend
  */
 void
-read_kind_from_one_backend(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend, char *kind, int node)
+read_kind_from_one_backend(POOL_CONNECTION * frontend, ChildClusterConnection * backend, char *kind, int node)
 {
 	if (VALID_BACKEND(node))
 	{
@@ -3265,7 +3265,7 @@ is_all_standbys_command_complete(unsigned char *kind_list, int num_backends, int
  * this function uses "decide by majority" method if kinds from all backends do not agree.
  */
 void
-read_kind_from_backend(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend, char *decided_kind)
+read_kind_from_backend(POOL_CONNECTION * frontend, ChildClusterConnection * backend, char *decided_kind)
 {
 	int			i;
 	unsigned char kind_list[MAX_NUM_BACKENDS];	/* records each backend's kind */
@@ -3936,7 +3936,7 @@ parse_copy_data(char *buf, int len, char delimiter, int col_id)
 }
 
 void
-query_ps_status(char *query, POOL_CONNECTION_POOL * backend)
+query_ps_status(char *query, ChildClusterConnection * backend)
 {
 	StartupPacket *sp;
 	char		psbuf[1024];
@@ -4116,7 +4116,7 @@ is_internal_transaction_needed(Node *node)
  * Start an internal transaction if necessary.
  */
 POOL_STATUS
-start_internal_transaction(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend, Node *node)
+start_internal_transaction(POOL_CONNECTION * frontend, ChildClusterConnection * backend, Node *node)
 {
 	int			i;
 
@@ -4159,7 +4159,7 @@ start_internal_transaction(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * ba
  * that satisfy VALID_BACKEND macro.
  */
 POOL_STATUS
-end_internal_transaction(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend)
+end_internal_transaction(POOL_CONNECTION * frontend, ChildClusterConnection * backend)
 {
 	int			i;
 	int			len;
@@ -4552,7 +4552,7 @@ extract_message(POOL_CONNECTION * backend, char *error_code, int major, char cla
  */
 
 static bool
-pool_process_notice_message_from_one_backend(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend, int backend_idx, char kind)
+pool_process_notice_message_from_one_backend(POOL_CONNECTION * frontend, ChildClusterConnection * backend, int backend_idx, char kind)
 {
 	int			major = MAJOR(backend);
 	POOL_CONNECTION *backend_conn = CONNECTION(backend, backend_idx);
@@ -4749,7 +4749,7 @@ pool_extract_error_message(bool read_kind, POOL_CONNECTION * backend, int major,
  * read message kind and rest of the packet then discard it
  */
 POOL_STATUS
-pool_discard_packet(POOL_CONNECTION_POOL * cp)
+pool_discard_packet(ChildClusterConnection * cp)
 {
 	int			i;
 	char		kind;
@@ -4777,7 +4777,7 @@ pool_discard_packet(POOL_CONNECTION_POOL * cp)
  * read message length and rest of the packet then discard it
  */
 POOL_STATUS
-pool_discard_packet_contents(POOL_CONNECTION_POOL * cp)
+pool_discard_packet_contents(ChildClusterConnection * cp)
 {
 	int			len,
 				i;
@@ -4819,7 +4819,7 @@ pool_discard_packet_contents(POOL_CONNECTION_POOL * cp)
 /*
  * Read packet from either frontend or backend and process it.
  */
-static POOL_STATUS read_packets_and_process(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend, int reset_request, int *state, short *num_fields, bool *cont)
+static POOL_STATUS read_packets_and_process(POOL_CONNECTION * frontend, ChildClusterConnection * backend, int reset_request, int *state, short *num_fields, bool *cont)
 {
 	fd_set		readmask;
 	fd_set		writemask;
@@ -4864,7 +4864,7 @@ SELECT_RETRY:
 	{
 		/* select load balancing node */
 		POOL_SESSION_CONTEXT *session_context;
-		ChildBackendConnection *child_con = GetChildBackendConnection();
+		ChildClusterConnection *child_con = GetChildClusterConnection();
 		int			node_id;
 
 		session_context = pool_get_session_context(false);

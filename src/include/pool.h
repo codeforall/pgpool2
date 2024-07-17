@@ -354,7 +354,7 @@ typedef enum CHILD_CONNECTION_SLOT_STATES
 	CONNECTION_SLOT_AUTHENTICATION_OK
 } CHILD_CONNECTION_SLOT_STATES;
 
-typedef struct ChildBackendConnectionSlot
+typedef struct ChildLocalBackendConnection
 {
 	int			pid;			/* backend pid */
 	int			key;			/* cancel key */
@@ -363,9 +363,9 @@ typedef struct ChildBackendConnectionSlot
 								 * under use. */
 	CHILD_CONNECTION_SLOT_STATES state;
 	POOL_CONNECTION *con;
-}			ChildBackendConnectionSlot;
+}			ChildLocalBackendConnection;
 
-typedef struct ChildBackendConnection
+typedef struct ChildClusterConnection
 {
 	StartupPacket 		*sp;			/* startup packet info */
 	bool 				borrowed;		/* true if borrowed from global pool */
@@ -373,34 +373,12 @@ typedef struct ChildBackendConnection
 	BackendEndPoint*	backend_end_point; /* Reference to global pool end point in shared mem */
 	int					pool_id;		/* global pool id */
 	bool				need_push_back;	/* true if this connection needs to be pushed back to global pool */
-	ChildBackendConnectionSlot slots[MAX_NUM_BACKENDS];
-} 			ChildBackendConnection;
-
-#define POOL_CONNECTION_POOL ChildBackendConnection
-#define POOL_CONNECTION_POOL_SLOT ChildBackendConnectionSlot
-
-/*
- * connection pool structure
- */
-typedef struct
-{
-	StartupPacket *sp;			/* startup packet info */
-	int			pid;			/* backend pid */
-	int			key;			/* cancel key */
-	POOL_CONNECTION *con;
-	time_t		closetime;		/* absolute time in second when the connection
-								 * closed if 0, that means the connection is
-								 * under use. */
-}			POOL_CONNECTION_POOL_SLOT_OLD;
-
-typedef struct
-{
-	ConnectionInfo *info;		/* connection info on shmem */
-	POOL_CONNECTION_POOL_SLOT_OLD *slots[MAX_NUM_BACKENDS];
-}			POOL_CONNECTION_POOL_OLD;
+	ChildLocalBackendConnection slots[MAX_NUM_BACKENDS];
+} ChildClusterConnection;
 
 /* Defined in pool_session_context.h */
-extern int	pool_get_major_version(void);
+extern int
+pool_get_major_version(void);
 
 /* NUM_BACKENDS now always returns actual number of backends */
 #define NUM_BACKENDS (pool_config->backend_desc->num_backends)
@@ -759,7 +737,7 @@ extern int	pool_send_to_frontend(char *data, int len, bool flush);
 extern int	pool_frontend_exists(void);
 extern pid_t pool_waitpid(int *status);
 extern int	write_status_file(void);
-extern POOL_NODE_STATUS * verify_backend_node_status(POOL_CONNECTION_POOL_SLOT * *slots);
+extern POOL_NODE_STATUS *verify_backend_node_status(ChildLocalBackendConnection **slots);
 extern POOL_NODE_STATUS * pool_get_node_status(void);
 extern void pool_set_backend_status_changed_time(int backend_id);
 extern int	get_next_main_node(void);
@@ -773,6 +751,6 @@ extern size_t strlcpy(char *dst, const char *src, size_t siz);
 
 /* pool_worker_child.c */
 extern void do_worker_child(void);
-extern int	get_query_result(POOL_CONNECTION_POOL_SLOT * *slots, int backend_id, char *query, POOL_SELECT_RESULT * *res);
+extern int get_query_result(ChildLocalBackendConnection **slots, int backend_id, char *query, POOL_SELECT_RESULT **res);
 
 #endif							/* POOL_H */

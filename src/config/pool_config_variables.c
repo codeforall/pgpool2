@@ -195,11 +195,11 @@ static char *ShowOption(struct config_generic *record, int index, int elevel);
 
 static char *config_enum_get_options(struct config_enum *record, const char *prefix,
 						const char *suffix, const char *separator);
-static void send_row_description_for_detail_view(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend);
+static void send_row_description_for_detail_view(POOL_CONNECTION * frontend, ChildClusterConnection * backend);
 static int send_grouped_type_variable_to_frontend(struct config_grouped_array_var *grouped_record,
-									   POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend);
+									   POOL_CONNECTION * frontend, ChildClusterConnection * backend);
 static int send_array_type_variable_to_frontend(struct config_generic *record,
-									 POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend);
+									 POOL_CONNECTION * frontend, ChildClusterConnection * backend);
 
 #endif
 
@@ -5929,7 +5929,7 @@ value_slot_for_config_record_is_empty(struct config_generic *record, int index)
 }
 
 bool
-set_config_option_for_session(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend, const char *name, const char *value)
+set_config_option_for_session(POOL_CONNECTION * frontend, ChildClusterConnection * backend, const char *name, const char *value)
 {
 	bool		ret;
 	MemoryContext oldCxt = MemoryContextSwitchTo(TopMemoryContext);
@@ -5944,7 +5944,7 @@ set_config_option_for_session(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL *
 }
 
 bool
-reset_all_variables(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend)
+reset_all_variables(POOL_CONNECTION * frontend, ChildClusterConnection * backend)
 {
 	int			i;
 	int			elevel = (frontend == NULL) ? FATAL : FRONTEND_ONLY_ERROR;
@@ -6013,7 +6013,7 @@ reset_all_variables(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend)
  * Handle "pgpool show all" command.
 */
 bool
-report_all_variables(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend)
+report_all_variables(POOL_CONNECTION * frontend, ChildClusterConnection * backend)
 {
 	int			i;
 	int			num_rows = 0;
@@ -6071,7 +6071,7 @@ report_all_variables(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend)
  * Handle "pgpool show" command.
 */
 bool
-report_config_variable(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend, const char *var_name)
+report_config_variable(POOL_CONNECTION * frontend, ChildClusterConnection * backend, const char *var_name)
 {
 	int			index = 0;
 	char	   *value;
@@ -6145,7 +6145,7 @@ report_config_variable(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backen
 }
 
 static int
-send_array_type_variable_to_frontend(struct config_generic *record, POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend)
+send_array_type_variable_to_frontend(struct config_generic *record, POOL_CONNECTION * frontend, ChildClusterConnection * backend)
 {
 	if (record->dynamic_array_var)
 	{
@@ -6186,7 +6186,7 @@ send_array_type_variable_to_frontend(struct config_generic *record, POOL_CONNECT
 }
 
 static int
-send_grouped_type_variable_to_frontend(struct config_grouped_array_var *grouped_record, POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend)
+send_grouped_type_variable_to_frontend(struct config_grouped_array_var *grouped_record, POOL_CONNECTION * frontend, ChildClusterConnection * backend)
 {
 	int			k,
 				index;
@@ -6237,7 +6237,7 @@ send_grouped_type_variable_to_frontend(struct config_grouped_array_var *grouped_
 }
 
 static void
-send_row_description_for_detail_view(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend)
+send_row_description_for_detail_view(POOL_CONNECTION * frontend, ChildClusterConnection * backend)
 {
 	static char *field_names[] = {"item", "value", "description"};
 

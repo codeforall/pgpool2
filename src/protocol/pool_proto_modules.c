@@ -86,27 +86,27 @@ int			is_select_for_update = 0;	/* 1 if SELECT INTO or SELECT FOR
  */
 char		query_string_buffer[QUERY_STRING_BUFFER_LEN];
 
-static int	check_errors(POOL_CONNECTION_POOL * backend, int backend_id);
+static int	check_errors(ChildClusterConnection * backend, int backend_id);
 static void generate_error_message(char *prefix, int specific_error, char *query);
 static POOL_STATUS parse_before_bind(POOL_CONNECTION * frontend,
-									 POOL_CONNECTION_POOL * backend,
+									 ChildClusterConnection * backend,
 									 POOL_SENT_MESSAGE * message,
 									 POOL_SENT_MESSAGE * bind_message);
 static POOL_STATUS send_prepare(POOL_CONNECTION * frontend,
-								POOL_CONNECTION_POOL * backend,
+								ChildClusterConnection * backend,
 								POOL_SENT_MESSAGE * message);
 static int *find_victim_nodes(int *ntuples, int nmembers, int main_node, int *number_of_nodes);
 static POOL_STATUS close_standby_transactions(POOL_CONNECTION * frontend,
-											  POOL_CONNECTION_POOL * backend);
+											  ChildClusterConnection * backend);
 
 static char *flatten_set_variable_args(const char *name, List *args);
 static bool
 			process_pg_terminate_backend_func(POOL_QUERY_CONTEXT * query_context);
 static void pool_discard_except_sync_and_ready_for_query(POOL_CONNECTION * frontend,
-											 POOL_CONNECTION_POOL * backend);
-static void si_get_snapshot(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend, Node *node, bool tstate_check);
+											 ChildClusterConnection * backend);
+static void si_get_snapshot(POOL_CONNECTION * frontend, ChildClusterConnection * backend, Node *node, bool tstate_check);
 
-static bool check_transaction_state_and_abort(char *query, Node *node, POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend);
+static bool check_transaction_state_and_abort(char *query, Node *node, POOL_CONNECTION * frontend, ChildClusterConnection * backend);
 
 static bool multi_statement_query(char *buf);
 
@@ -185,7 +185,7 @@ process_pg_terminate_backend_func(POOL_QUERY_CONTEXT * query_context)
  */
 POOL_STATUS
 SimpleQuery(POOL_CONNECTION * frontend,
-			POOL_CONNECTION_POOL * backend, int len, char *contents)
+			ChildClusterConnection * backend, int len, char *contents)
 {
 	static char *sq_config = "pool_status";
 	static char *sq_pools = "pool_pools";
@@ -908,7 +908,7 @@ SimpleQuery(POOL_CONNECTION * frontend,
  * process EXECUTE (V3 only)
  */
 POOL_STATUS
-Execute(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend,
+Execute(POOL_CONNECTION * frontend, ChildClusterConnection * backend,
 		int len, char *contents)
 {
 	int			commit = 0;
@@ -1221,7 +1221,7 @@ Execute(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend,
  * process Parse (V3 only)
  */
 POOL_STATUS
-Parse(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend,
+Parse(POOL_CONNECTION * frontend, ChildClusterConnection * backend,
 	  int len, char *contents)
 {
 	int			deadlock_detected = 0;
@@ -1600,7 +1600,7 @@ Parse(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend,
 }
 
 POOL_STATUS
-Bind(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend,
+Bind(POOL_CONNECTION * frontend, ChildClusterConnection * backend,
 	 int len, char *contents)
 {
 	char	   *pstmt_name;
@@ -1762,7 +1762,7 @@ Bind(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend,
 }
 
 POOL_STATUS
-Describe(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend,
+Describe(POOL_CONNECTION * frontend, ChildClusterConnection * backend,
 		 int len, char *contents)
 {
 	POOL_SENT_MESSAGE *msg;
@@ -1855,7 +1855,7 @@ Describe(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend,
 
 
 POOL_STATUS
-Close(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend,
+Close(POOL_CONNECTION * frontend, ChildClusterConnection * backend,
 	  int len, char *contents)
 {
 	POOL_SENT_MESSAGE *msg;
@@ -1986,7 +1986,7 @@ Close(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend,
 
 
 POOL_STATUS
-FunctionCall3(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend,
+FunctionCall3(POOL_CONNECTION * frontend, ChildClusterConnection * backend,
 			  int len, char *contents)
 {
 	/*
@@ -2018,7 +2018,7 @@ FunctionCall3(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend,
  */
 POOL_STATUS
 ReadyForQuery(POOL_CONNECTION * frontend,
-			  POOL_CONNECTION_POOL * backend, bool send_ready, bool cache_commit)
+			  ChildClusterConnection * backend, bool send_ready, bool cache_commit)
 {
 	int			i;
 	int			len;
@@ -2355,7 +2355,7 @@ ReadyForQuery(POOL_CONNECTION * frontend,
  * Close running transactions on standbys.
  */
 static POOL_STATUS close_standby_transactions(POOL_CONNECTION * frontend,
-											  POOL_CONNECTION_POOL * backend)
+											  ChildClusterConnection * backend)
 {
 	int			i;
 
@@ -2379,7 +2379,7 @@ static POOL_STATUS close_standby_transactions(POOL_CONNECTION * frontend,
 }
 
 POOL_STATUS
-ParseComplete(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend)
+ParseComplete(POOL_CONNECTION * frontend, ChildClusterConnection * backend)
 {
 	POOL_SESSION_CONTEXT *session_context;
 
@@ -2403,7 +2403,7 @@ ParseComplete(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend)
 }
 
 POOL_STATUS
-BindComplete(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend)
+BindComplete(POOL_CONNECTION * frontend, ChildClusterConnection * backend)
 {
 	POOL_SESSION_CONTEXT *session_context;
 
@@ -2427,7 +2427,7 @@ BindComplete(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend)
 }
 
 POOL_STATUS
-CloseComplete(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend)
+CloseComplete(POOL_CONNECTION * frontend, ChildClusterConnection * backend)
 {
 	POOL_SESSION_CONTEXT *session_context;
 	POOL_STATUS status;
@@ -2502,7 +2502,7 @@ CloseComplete(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend)
 
 POOL_STATUS
 ParameterDescription(POOL_CONNECTION * frontend,
-					 POOL_CONNECTION_POOL * backend)
+					 ChildClusterConnection * backend)
 {
 	int			len,
 				len1 = 0;
@@ -2586,7 +2586,7 @@ ParameterDescription(POOL_CONNECTION * frontend,
 
 POOL_STATUS
 ErrorResponse3(POOL_CONNECTION * frontend,
-			   POOL_CONNECTION_POOL * backend)
+			   ChildClusterConnection * backend)
 {
 	POOL_STATUS ret;
 
@@ -2602,7 +2602,7 @@ ErrorResponse3(POOL_CONNECTION * frontend,
 
 POOL_STATUS
 FunctionCall(POOL_CONNECTION * frontend,
-			 POOL_CONNECTION_POOL * backend)
+			 ChildClusterConnection * backend)
 {
 	char		dummy[2];
 	int			oid;
@@ -2698,7 +2698,7 @@ FunctionCall(POOL_CONNECTION * frontend,
 
 POOL_STATUS
 ProcessFrontendResponse(POOL_CONNECTION * frontend,
-						POOL_CONNECTION_POOL * backend)
+						ChildClusterConnection * backend)
 {
 	char		fkind;
 	char	   *bufp = NULL;
@@ -2950,7 +2950,7 @@ ProcessFrontendResponse(POOL_CONNECTION * frontend,
 
 POOL_STATUS
 ProcessBackendResponse(POOL_CONNECTION * frontend,
-					   POOL_CONNECTION_POOL * backend,
+					   ChildClusterConnection * backend,
 					   int *state, short *num_fields)
 {
 	int			status = POOL_CONTINUE;
@@ -3269,7 +3269,7 @@ ProcessBackendResponse(POOL_CONNECTION * frontend,
 
 POOL_STATUS
 CopyInResponse(POOL_CONNECTION * frontend,
-			   POOL_CONNECTION_POOL * backend)
+			   ChildClusterConnection * backend)
 {
 	POOL_STATUS status;
 
@@ -3288,7 +3288,7 @@ CopyInResponse(POOL_CONNECTION * frontend,
 
 POOL_STATUS
 CopyOutResponse(POOL_CONNECTION * frontend,
-				POOL_CONNECTION_POOL * backend)
+				ChildClusterConnection * backend)
 {
 	POOL_STATUS status;
 
@@ -3307,7 +3307,7 @@ CopyOutResponse(POOL_CONNECTION * frontend,
 
 POOL_STATUS
 CopyDataRows(POOL_CONNECTION * frontend,
-			 POOL_CONNECTION_POOL * backend, int copyin)
+			 ChildClusterConnection * backend, int copyin)
 {
 	char	   *string = NULL;
 	int			len;
@@ -3473,7 +3473,7 @@ CopyDataRows(POOL_CONNECTION * frontend,
  * transaction state.
  */
 void
-raise_intentional_error_if_need(POOL_CONNECTION_POOL * backend)
+raise_intentional_error_if_need(ChildClusterConnection * backend)
 {
 	int			i;
 	POOL_SESSION_CONTEXT *session_context;
@@ -3554,7 +3554,7 @@ raise_intentional_error_if_need(POOL_CONNECTION_POOL * backend)
  *---------------------------------------------------
  */
 static int
-check_errors(POOL_CONNECTION_POOL * backend, int backend_id)
+check_errors(ChildClusterConnection * backend, int backend_id)
 {
 
 	/*
@@ -3654,10 +3654,8 @@ generate_error_message(char *prefix, int specific_error, char *query)
  * Make per DB node statement log
  */
 void
-per_node_statement_log(POOL_CONNECTION_POOL * backend, int node_id, char *query)
+per_node_statement_log(ChildClusterConnection * backend, int node_id, char *query)
 {
-	// POOL_CONNECTION_POOL_SLOT *slot = backend->slots[node_id];
-
 	if (pool_config->log_per_node_statement)
 		ereport(LOG,
 				(errmsg("DB node id: %d backend pid: %d statement: %s", node_id, ntohl(backend->slots[node_id].pid), query)));
@@ -3667,7 +3665,7 @@ per_node_statement_log(POOL_CONNECTION_POOL * backend, int node_id, char *query)
  * Make per DB node statement notice message
  */
 void
-per_node_statement_notice(POOL_CONNECTION_POOL * backend, int node_id, char *query)
+per_node_statement_notice(ChildClusterConnection * backend, int node_id, char *query)
 {
 	if (pool_config->notice_per_node_statement)
 		ereport(NOTICE,
@@ -3680,9 +3678,8 @@ per_node_statement_notice(POOL_CONNECTION_POOL * backend, int node_id, char *que
  * All data read in this function is returned to stream.
  */
 char
-per_node_error_log(POOL_CONNECTION_POOL * backend, int node_id, char *query, char *prefix, bool unread)
+per_node_error_log(ChildClusterConnection * backend, int node_id, char *query, char *prefix, bool unread)
 {
-	// POOL_CONNECTION_POOL_SLOT *slot = backend->slots[node_id];
 	char	   *message;
 	char	   kind;
 
@@ -3710,7 +3707,7 @@ per_node_error_log(POOL_CONNECTION_POOL * backend, int node_id, char *query, cha
  * node. Caller must provide the parse message data as "message".
  */
 static POOL_STATUS parse_before_bind(POOL_CONNECTION * frontend,
-									 POOL_CONNECTION_POOL * backend,
+									 ChildClusterConnection * backend,
 									 POOL_SENT_MESSAGE * message,
 									 POOL_SENT_MESSAGE * bind_message)
 {
@@ -3877,7 +3874,7 @@ static POOL_STATUS parse_before_bind(POOL_CONNECTION * frontend,
  * argument.
  */
 static POOL_STATUS send_prepare(POOL_CONNECTION * frontend,
-								POOL_CONNECTION_POOL * backend,
+								ChildClusterConnection * backend,
 								POOL_SENT_MESSAGE * message)
 {
 	int			node_id;
@@ -4172,7 +4169,7 @@ flatten_set_variable_args(const char *name, List *args)
  * Wait till ready for query received.
  */
 static void
-pool_wait_till_ready_for_query(POOL_CONNECTION_POOL * backend)
+pool_wait_till_ready_for_query(ChildClusterConnection * backend)
 {
 	char		kind;
 	int			len;
@@ -4221,7 +4218,7 @@ pool_wait_till_ready_for_query(POOL_CONNECTION_POOL * backend)
  */
 static void
 pool_discard_except_sync_and_ready_for_query(POOL_CONNECTION * frontend,
-											 POOL_CONNECTION_POOL * backend)
+											 ChildClusterConnection * backend)
 {
 	POOL_PENDING_MESSAGE *pmsg;
 	int			i;
@@ -4330,7 +4327,7 @@ pool_discard_except_sync_and_ready_for_query(POOL_CONNECTION * frontend,
  * Preconditions: query is in progress. The command is succeeded.
  */
 void
-pool_at_command_success(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend)
+pool_at_command_success(POOL_CONNECTION * frontend, ChildClusterConnection * backend)
 {
 	Node	   *node;
 	char	   *query;
@@ -4458,7 +4455,7 @@ pool_at_command_success(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backe
  * read message length (V3 only)
  */
 int
-pool_read_message_length(POOL_CONNECTION_POOL * cp)
+pool_read_message_length(ChildClusterConnection * cp)
 {
 	int			length,
 				length0;
@@ -4510,7 +4507,7 @@ pool_read_message_length(POOL_CONNECTION_POOL * cp)
  * The array is in the static storage, thus it will be destroyed by subsequent calls.
  */
 int *
-pool_read_message_length2(POOL_CONNECTION_POOL * cp)
+pool_read_message_length2(ChildClusterConnection * cp)
 {
 	int			length,
 				length0;
@@ -4594,7 +4591,7 @@ pool_emit_log_for_message_length_diff(int *length_array, char *name)
 }
 
 signed char
-pool_read_kind(POOL_CONNECTION_POOL * cp)
+pool_read_kind(ChildClusterConnection * cp)
 {
 	char		kind0,
 				kind;
@@ -4651,7 +4648,7 @@ pool_read_kind(POOL_CONNECTION_POOL * cp)
 }
 
 int
-pool_read_int(POOL_CONNECTION_POOL * cp)
+pool_read_int(ChildClusterConnection * cp)
 {
 	int			data0,
 				data;
@@ -4691,7 +4688,7 @@ pool_read_int(POOL_CONNECTION_POOL * cp)
  * In case of starting an internal transaction, this should be false.
  */
 static void
-si_get_snapshot(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend, Node * node, bool tstate_check)
+si_get_snapshot(POOL_CONNECTION * frontend, ChildClusterConnection * backend, Node * node, bool tstate_check)
 {
 	POOL_SESSION_CONTEXT *session_context;
 
@@ -4752,7 +4749,7 @@ si_get_snapshot(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend, Node
  */
 static bool
 check_transaction_state_and_abort(char *query, Node *node, POOL_CONNECTION * frontend,
-								  POOL_CONNECTION_POOL * backend)
+								  ChildClusterConnection * backend)
 {
 	int		len;
 

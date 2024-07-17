@@ -52,7 +52,7 @@ static int	Elevel = DEBUG2;
  * Initialize per session context
  */
 void
-pool_init_session_context(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend)
+pool_init_session_context(POOL_CONNECTION * frontend, ChildClusterConnection * backend)
 {
 	session_context = &session_context_d;
 	ProcessInfo *process_info;

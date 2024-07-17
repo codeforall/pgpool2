@@ -60,10 +60,9 @@
 #include "context/pool_process_context.h"
 
 int parent_link = -1;
-POOL_CONNECTION_POOL *pool_connection_pool;
+ChildClusterConnection *pool_connection_pool;
 static int	pool_index;			/* Active pool index */
-ChildBackendConnection	child_backend_connection;
-
+ChildClusterConnection child_backend_connection;
 
 volatile sig_atomic_t backend_timer_expired = 0;	/* flag for connection
 													 * closed timer is expired */
@@ -75,8 +74,8 @@ static bool connect_with_timeout(int fd, struct addrinfo *walk, char *host, int 
 
 #define TMINTMAX 0x7fffffff
 
-ChildBackendConnection* 
-GetChildBackendConnection(void)
+ChildClusterConnection *
+GetChildClusterConnection(void)
 {
 	return &child_backend_connection;
 }
@@ -86,17 +85,17 @@ GetChildBackendConnection(void)
 void
 pool_init_cp(int parent_link_fd)
 {
-	ClearChildBackendConnection();
+	ClearChildClusterConnection();
 	parent_link = parent_link_fd;
 }
 
 void
-ClearChildBackendConnection(void)
+ClearChildClusterConnection(void)
 {
 	child_backend_connection.backend_end_point = NULL;
 	child_backend_connection.borrowed = false;
 	child_backend_connection.pool_id = -1;
-	memset(child_backend_connection.slots, 0, sizeof(ChildBackendConnectionSlot) * MAX_NUM_BACKENDS);
+	memset(child_backend_connection.slots, 0, sizeof(ChildLocalBackendConnection) * MAX_NUM_BACKENDS);
 }
 
 /*
@@ -106,7 +105,7 @@ void
 pool_discard_cp(char *user, char *database, int protoMajor)
 {
 #ifdef NOT_USED
-	POOL_CONNECTION_POOL *p = pool_get_cp(user, database, protoMajor, 0);
+	ChildClusterConnection *p = pool_get_cp(user, database, protoMajor, 0);
 	ConnectionInfo *info;
 	int			i,
 				freed = 0;
@@ -134,7 +133,7 @@ pool_discard_cp(char *user, char *database, int protoMajor)
 	}
 
 	info = p->info;
-	memset(p, 0, sizeof(POOL_CONNECTION_POOL));
+	memset(p, 0, sizeof(ChildClusterConnection));
 	p->info = info;
 	memset(p->info, 0, sizeof(ConnectionInfo) * MAX_NUM_BACKENDS);
 #endif
@@ -144,18 +143,18 @@ pool_discard_cp(char *user, char *database, int protoMajor)
 /*
 * create a connection pool by user and database
 */
-POOL_CONNECTION_POOL *
+ChildClusterConnection *
 pool_create_cp(void)
 {
 	int			i,
 				freed = 0;
 	time_t		closetime;
-	POOL_CONNECTION_POOL *oldestp;
-	POOL_CONNECTION_POOL *ret;
+	ChildClusterConnection *oldestp;
+	ChildClusterConnection *ret;
 	ConnectionInfo *info;
 	int		main_node_id;
 
-	POOL_CONNECTION_POOL *p = pool_connection_pool;
+	ChildClusterConnection *p = pool_connection_pool;
 
 	/* if no connection pool exists we have no reason to live */
 	if (p == NULL)
@@ -240,7 +239,7 @@ pool_create_cp(void)
 	}
 
 	info = p->info;
-	memset(p, 0, sizeof(POOL_CONNECTION_POOL));
+	memset(p, 0, sizeof(ChildClusterConnection));
 	p->info = info;
 	memset(p->info, 0, sizeof(ConnectionInfo) * MAX_NUM_BACKENDS);
 
@@ -254,10 +253,10 @@ pool_create_cp(void)
  * set backend connection close timer
  */
 void
-pool_connection_pool_timer(POOL_CONNECTION_POOL * backend)
+pool_connection_pool_timer(ChildClusterConnection * backend)
 {
 	#ifdef NOT_USED
-	POOL_CONNECTION_POOL *p = pool_connection_pool;
+	ChildClusterConnection *p = pool_connection_pool;
 	int			i;
 
 	ereport(DEBUG1,
@@ -311,7 +310,7 @@ pool_backend_timer(void)
 {
 #define TMINTMAX 0x7fffffff
 #ifdef UN_USED
-	POOL_CONNECTION_POOL *p = pool_connection_pool;
+	ChildClusterConnection *p = pool_connection_pool;
 	int			i,
 				j;
 	time_t		now;
@@ -368,7 +367,7 @@ pool_backend_timer(void)
 					pfree(CONNECTION_SLOT(p, j));
 				}
 				info = p->info;
-				memset(p, 0, sizeof(POOL_CONNECTION_POOL));
+				memset(p, 0, sizeof(ChildClusterConnection));
 				p->info = info;
 				memset(p->info, 0, sizeof(ConnectionInfo) * MAX_NUM_BACKENDS);
 			}
@@ -757,7 +756,7 @@ connect_inet_domain_socket_by_port(char *host, int port, bool retry)
 static bool
 ConnectBackendSlotSocket(int slot_no)
 {
-	ChildBackendConnectionSlot *cp = &child_backend_connection.slots[slot_no];
+	ChildLocalBackendConnection *cp = &child_backend_connection.slots[slot_no];
 	BackendInfo *b = &pool_config->backend_desc->backend_info[slot_no];
 	int			fd;
 
@@ -966,7 +965,7 @@ close_all_backend_connections(void)
 {
 #ifdef NOT_USED
 	int			i;
-	POOL_CONNECTION_POOL *p = pool_connection_pool;
+	ChildClusterConnection *p = pool_connection_pool;
 
 	pool_sigset_t oldmask;
 
@@ -991,7 +990,7 @@ void update_pooled_connection_count(void)
 {
 	int i;
 	int count = 0;
-	POOL_CONNECTION_POOL *p = pool_connection_pool;
+	ChildClusterConnection *p = pool_connection_pool;
 	for (i = 0; i < pool_config->max_pool; i++)
 	{
 		if (&MAIN_CONNECTION(p))
@@ -1005,7 +1004,7 @@ void update_pooled_connection_count(void)
  * If no node is in use, return -1.
  */
 int
-in_use_backend_id(POOL_CONNECTION_POOL *pool)
+in_use_backend_id(ChildClusterConnection *pool)
 {
 	int	i;
 
@@ -1089,7 +1088,7 @@ ExportLocalSocketsToBackendPool(void)
 	if (processType != PT_CHILD)
 		return false;
 
-	get_sockets_array( GetChildBackendConnection()->backend_end_point, &sockets, &num_sockets, false);
+	get_sockets_array(GetChildClusterConnection()->backend_end_point, &sockets, &num_sockets, false);
 	if (sockets && num_sockets > 0)
 	{
 		bool ret;
@@ -1126,7 +1125,7 @@ InstallSocketsInConnectionPool(ConnectionPoolEntry* pool_entry, int *sockets)
 bool
 ExportLocalBackendConnectionToPool(void)
 {
-	ChildBackendConnection* current_backend_con = GetChildBackendConnection();
+	ChildClusterConnection *current_backend_con = GetChildClusterConnection();
 	StartupPacket *sp = current_backend_con->sp;
 	int pool_id = current_backend_con->pool_id;
 	int i, sock_index;
@@ -1186,9 +1185,9 @@ ExportLocalBackendConnectionToPool(void)
 }
 
 bool
-ChildBackendConnectionNeedPush(void)
+ChildClusterConnectionNeedPush(void)
 {
-	ChildBackendConnection* child_connection = GetChildBackendConnection();
+	ChildClusterConnection *child_connection = GetChildClusterConnection();
 	ConnectionPoolEntry* pool_entry = GetChildConnectionPoolEntry();
 	if (!pool_entry)
 		return false;
@@ -1224,13 +1223,13 @@ ClearChildPooledConnectionData(void)
 bool
 DiscardBackendConnection(bool release_pool)
 {
-	ChildBackendConnection* current_backend_con;
+	ChildClusterConnection *current_backend_con;
 	int i, pool_id;
 
 	if (processType != PT_CHILD)
 		return false;
 
-	current_backend_con = GetChildBackendConnection();
+	current_backend_con = GetChildClusterConnection();
 
 	pool_id = current_backend_con->pool_id;
 	
@@ -1273,7 +1272,7 @@ DiscardBackendConnection(bool release_pool)
 bool
 SetupNewConnectionIntoChild(StartupPacket* sp)
 {
-	ChildBackendConnection* current_backend_con = GetChildBackendConnection();
+	ChildClusterConnection *current_backend_con = GetChildClusterConnection();
 
 	if (processType != PT_CHILD)
 		return false;
@@ -1295,7 +1294,7 @@ ImportPoolConnectionIntoChild(int pool_id, int *sockets, LEASE_TYPES lease_type)
 	int num_sockets;
 	int *backend_ids;
 	BackendEndPoint* backend_end_point = GetBackendEndPoint(pool_id);
-	ChildBackendConnection* current_backend_con = GetChildBackendConnection();
+	ChildClusterConnection *current_backend_con = GetChildClusterConnection();
 
 	if (backend_end_point == NULL)
 		return false;
@@ -1391,7 +1390,7 @@ static void
 import_startup_packet_into_child(StartupPacket* sp, char* startup_packet_data)
 {
 
-	ChildBackendConnection* current_backend_con = GetChildBackendConnection();
+	ChildClusterConnection *current_backend_con = GetChildClusterConnection();
 
 	if (sp->len <= 0 || sp->len >= MAX_STARTUP_PACKET_LENGTH)
 		ereport(ERROR,
@@ -1716,7 +1715,7 @@ get_sockets_array(BackendEndPoint*  backend_endpoint, int **sockets, int* num_so
 		}
 		else
 		{
-			ChildBackendConnection* current_backend_con = GetChildBackendConnection();
+			ChildClusterConnection *current_backend_con = GetChildClusterConnection();
 			socks[i] = 	current_backend_con->slots[sock_index].con->fd;
 		}
 	}

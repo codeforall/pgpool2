@@ -40,18 +40,17 @@ typedef struct
 	char	version_string[MAX_PG_VERSION_STRING+1];	/* original version string */
 }			PGVersion;
 
-
-extern void send_startup_packet(POOL_CONNECTION_POOL_SLOT * cp, StartupPacket *sp);
+extern void send_startup_packet(ChildLocalBackendConnection *cp, StartupPacket *sp);
 extern void pool_free_startup_packet(StartupPacket *sp);
 
-extern POOL_CONNECTION_POOL_SLOT * make_persistent_db_connection(
-																 int db_node_id, char *hostname, int port, char *dbname, char *user, char *password, bool retry);
-extern POOL_CONNECTION_POOL_SLOT * make_persistent_db_connection_noerror(
-																		 int db_node_id, char *hostname, int port, char *dbname, char *user, char *password, bool retry);
-extern void discard_persistent_db_connection(POOL_CONNECTION_POOL_SLOT * cp);
+extern ChildLocalBackendConnection *make_persistent_db_connection(
+	int db_node_id, char *hostname, int port, char *dbname, char *user, char *password, bool retry);
+extern ChildLocalBackendConnection *make_persistent_db_connection_noerror(
+	int db_node_id, char *hostname, int port, char *dbname, char *user, char *password, bool retry);
+extern void discard_persistent_db_connection(ChildLocalBackendConnection *cp);
 extern int	select_load_balancing_node(void);
 
-extern PGVersion *Pgversion(POOL_CONNECTION_POOL * backend);
+extern PGVersion *Pgversion(ChildClusterConnection * backend);
 
 /* pool_pg_utils.c */
 extern bool si_snapshot_prepared(void);
