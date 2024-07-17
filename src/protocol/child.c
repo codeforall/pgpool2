@@ -1054,7 +1054,7 @@ connect_backend(StartupPacket *sp, POOL_CONNECTION * frontend, int pool_id)
 
 		for (i = 0; i < NUM_BACKENDS; i++)
 		{
-			if (VALID_BACKEND(i) && CONNECTION_SLOT(backend, i))
+			if (VALID_BACKEND(i) && CONNECTION(backend, i))
 			{
 				/* set DB node id */
 				pool_set_db_node_id(CONNECTION(backend, i), i);

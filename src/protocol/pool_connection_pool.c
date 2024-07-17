@@ -1011,7 +1011,7 @@ in_use_backend_id(POOL_CONNECTION_POOL *pool)
 
 	for (i = 0; i < NUM_BACKENDS; i++)
 	{
-		if (pool->slots[i])
+		if (pool->slots[i].con)
 			return i;
 	}
 
