@@ -159,6 +159,10 @@ typedef struct CancelPacket
 
 #define MAX_PASSWORD_SIZE		1024
 
+#define NODE_STATUS_SYNC					0x00
+#define NODE_STATUS_NODE_REMOVED			0x02
+#define NODE_STATUS_NODE_ATTACHED			0x04
+#define NODE_STATUS_NODE_PRIMARY_CHANGED	0x08
 
 /*
  * HbaLines is declared in pool_hba.h
@@ -185,7 +189,8 @@ typedef struct
 {
 	char		database[SM_DATABASE];	/* Database name */
 	char		user[SM_USER];	/* User name */
-    int         load_balancing_node;
+	ParamStatus params;
+	int         load_balancing_node;
 	char        startup_packet_data[MAX_STARTUP_PACKET_LENGTH];			/* startup packet info */
 	StartupPacket sp;			/* startup packet info */
 	int			key;			/* cancel key */
@@ -210,7 +215,11 @@ typedef struct
     int         backend_ids[MAX_NUM_BACKENDS];
 	BackendConnection conn_slots[MAX_NUM_BACKENDS];
 	BACKEND_STATUS backend_status[MAX_NUM_BACKENDS];	/* Backend status of each node*/
-    
+	int			primary_node_id;	/* the primary node id in streaming
+									 * replication mode at the time of connection*/
+	volatile sig_atomic_t node_status_changed;
+	time_t	node_status_last_changed_time;
+
 }			BackendEndPoint;
 /*
  * stream connection structure
@@ -276,7 +285,7 @@ typedef struct
 	 * following are used to remember current session parameter status.
 	 * re-used connection will need them (V3 only)
 	 */
-	ParamStatus params;
+//	ParamStatus params;
 
 	int			no_forward;		/* if non 0, do not write to frontend */
 
@@ -309,6 +318,9 @@ typedef enum POOL_ENTRY_STATUS
 }			POOL_ENTRY_STATUS;
 
 
+/* This structure crossponds to the backend connection
+ * in the global connection pool.
+ */
 typedef struct
 {
 	BackendEndPoint 	endPoint;

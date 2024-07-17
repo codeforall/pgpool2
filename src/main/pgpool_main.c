@@ -3782,7 +3782,6 @@ sync_backend_from_watchdog(void)
 		ereport(LOG,
 				(errmsg("primary node was changed after the sync from \"%s\"", backendStatus->nodeName),
 				 errdetail("all children needs to be restarted")));
-
 	}
 	else
 	{
@@ -3930,6 +3929,38 @@ sync_backend_from_watchdog(void)
 	}
 }
 
+static void
+set_node_status_changed_in_pool(unsigned char request_details, bool primary_changed, bool inform_children, int *down_node_ids, int down_node_ids_index)
+{
+	ConnectionPoolEntry* connection_pool = GetConnectionPool();
+	int new_status = 0;
+	int i;
+
+	for (i = 0; i < pool_config->max_pool_size; i++)
+	{
+		if (connection_pool[i].status == POOL_ENTRY_EMPTY)
+			continue;
+
+		connection_pool[i].endPoint.node_status_changed |= new_status;
+		connection_pool[i].endPoint.node_status_last_changed_time = time(NULL);
+
+		if (inform_children && connection_pool[i].borrower_pid > 0 )
+		{
+			int		idx;
+			for (idx = 0; idx < down_node_ids_index; idx++)
+			{
+				int	node_id = down_node_ids[idx];
+				if (connection_pool[i].endPoint.load_balancing_node == node_id)
+				{
+					ereport(LOG,
+						(errmsg("child process with PID:%d needs restart, because pool %d uses backend %d",
+							connection_pool[i].borrower_pid, i, node_id)));
+					/* Do restart or whatever...			restart = true; */
+				}
+			}
+		}
+	}
+}
 /*
  * Obtain backend server version number and cache it.  Note that returned
  * version number is in the static memory area.

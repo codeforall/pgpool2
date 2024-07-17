@@ -21,12 +21,22 @@
 #ifndef pool_params_h
 #define pool_params_h
 
+#define MAX_PARAM_NAME_LEN 64
+#define MAX_PARAM_VALUE_LEN 128
+#define MAX_PARAM_ITEMS 64
+
+typedef struct PGParam
+{
+	char	   name[MAX_PARAM_NAME_LEN];
+	char	   value[MAX_PARAM_VALUE_LEN];
+} PGParam;
+
 typedef struct
 {
-	int			num;			/* number of entries */
-	char	  **names;			/* parameter names */
-	char	  **values;			/* values */
+	int		num;			/* number of entries */
+	PGParam params[MAX_PARAM_ITEMS];
 }			ParamStatus;
+
 
 extern int	pool_init_params(ParamStatus * params);
 extern void pool_discard_params(ParamStatus * params);

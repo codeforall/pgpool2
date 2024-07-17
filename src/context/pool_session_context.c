@@ -206,6 +206,28 @@ pool_session_context_destroy(void)
 	session_context = NULL;
 }
 
+void
+pool_select_new_load_balance_node(bool noerror)
+{
+	POOL_SESSION_CONTEXT *session_context = pool_get_session_context(noerror);
+	if (session_context)
+	{
+		int node_id;
+		BackendEndPoint* backend_end_point = GetChildBorrowedBackendEndPoint();
+		if (!RAW_MODE && pool_config->load_balance_mode)
+		{
+			node_id = select_load_balancing_node();
+		}
+		else
+		{
+			node_id = SL_MODE ? PRIMARY_NODE_ID : MAIN_NODE_ID;
+		}
+
+		session_context->load_balance_node_id = node_id;
+		if (backend_end_point)
+			backend_end_point->load_balancing_node = node_id;	
+	}
+}
 /*
  * Return session context
  */

@@ -45,6 +45,7 @@
 #include "pool.h"
 #include "main/pgpool_ipc.h"
 #include "context/pool_query_context.h"
+#include "context/pool_session_context.h"
 #include "utils/pool_stream.h"
 #include "utils/palloc.h"
 #include "pool_config.h"
@@ -888,7 +889,7 @@ ConnectBackendSocktes(void)
 			// p->info[i].client_idle_duration = 0;
 			// p->slots[i] = s;
 
-			pool_init_params(&child_backend_connection.slots[i].con->params);
+			pool_init_params(&child_backend_connection.backend_end_point->params);
 
 			if (BACKEND_INFO(i).backend_status != CON_UP)
 			{
@@ -1647,6 +1648,8 @@ unregister_lease(int pool_id, IPC_Endpoint* ipc_endpoint)
 
 	ConnectionPool[pool_id].borrower_pid = -1;
 	ConnectionPool[pool_id].borrower_proc_info_id = -1;
+	ConnectionPool[pool_id].endPoint.client_disconnection_time = time(NULL);
+	ConnectionPool[pool_id].endPoint.client_disconnection_count++;
 
 	return true;
 }
@@ -1814,4 +1817,60 @@ GetAuthKindForCurrentPoolBackendConnection(void)
 	if (backend_end_point == NULL)
 		return -1;
 	return backend_end_point->auth_kind;
+}
+
+/* Handles the failover/failback event in child process */
+void
+HandleNodeChangeEventForLeasedConnection(void)
+{
+	ConnectionPoolEntry* pool_entry = GetChildConnectionPoolEntry();
+	if (pool_entry == NULL)
+		return;
+
+	if (pool_entry->endPoint.node_status_changed == NODE_STATUS_SYNC)
+		return;
+
+	if (pool_entry->endPoint.node_status_changed | NODE_STATUS_NODE_PRIMARY_CHANGED)
+	{
+		/* See if we have a different primary node */
+		if (Req_info->primary_node_id != pool_entry->endPoint.primary_node_id)
+		{
+			ereport(LOG,
+				(errmsg("Primary node changed from %d to %d", pool_entry->endPoint.primary_node_id, Req_info->primary_node_id)));
+			/* What to do here ??  TODO */
+		}
+	}
+	else if (pool_entry->endPoint.node_status_changed | NODE_STATUS_NODE_REMOVED)
+	{
+		int i;
+		for (i = 0; i < NUM_BACKENDS; i++)
+		{
+			if ((pool_entry->endPoint.backend_status[i] == CON_UP) &&
+				(BACKEND_INFO(i).backend_status == CON_DOWN || BACKEND_INFO(i).backend_status == CON_UNUSED))
+			{
+				ereport(LOG,
+					(errmsg("Backend node %d was failed", i)));
+				pool_entry->endPoint.backend_status[i] = BACKEND_INFO(i).backend_status;
+				/* Verify if the failed node was load balancing node */
+				if (i == pool_entry->endPoint.load_balancing_node)
+				{
+					/* if we were idle. Just select a new load balancing node and continue */
+					pool_select_new_load_balance_node(true);
+				}
+				if (i == pool_entry->endPoint.primary_node_id)
+				{
+					/* Primary node failed */
+
+				}
+			}
+		}
+
+		if (pool_entry->endPoint.load_balancing_node >= 0)
+		{
+			if (pool_entry->endPoint.backend_status[pool_entry->endPoint.load_balancing_node])
+			ereport(LOG,
+				(errmsg("Node %d removed from load balancing", pool_entry->endPoint.load_balancing_node)));
+			/* What to do here ??  TDOD */
+		}
+	}
 }
