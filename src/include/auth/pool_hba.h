@@ -28,6 +28,7 @@
 
 #include "parser/pg_list.h"
 #include "pool.h"
+#include "connection_pool/backend_connection.h"
 
 #ifdef USE_LDAP
 #define LDAP_DEPRECATED 1

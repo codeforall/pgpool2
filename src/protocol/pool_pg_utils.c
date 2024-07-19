@@ -47,11 +47,11 @@ static void si_leave_critical_region(void);
 /*
  * create a persistent connection
  */
-ChildLocalBackendConnection *
+BackendNodeConnection *
 make_persistent_db_connection(
 	int db_node_id, char *hostname, int port, char *dbname, char *user, char *password, bool retry)
 {
-	ChildLocalBackendConnection *cp;
+	BackendNodeConnection *cp;
 	int			fd;
 
 #define MAX_USER_AND_DATABASE	1024
@@ -68,7 +68,7 @@ make_persistent_db_connection(
 				len1;
 	StartupPacket *sp;
 
-	cp = palloc0(sizeof(ChildLocalBackendConnection));
+	cp = palloc0(sizeof(BackendNodeConnection));
 	startup_packet = palloc0(sizeof(*startup_packet));
 	startup_packet->protoVersion = htonl(0x00030000);	/* set V3 proto
 														 * major/minor */
@@ -176,11 +176,11 @@ make_persistent_db_connection(
  * make_persistent_db_connection_noerror() is a wrapper over
  * make_persistent_db_connection() which does not ereports in case of an error
  */
-ChildLocalBackendConnection *
+BackendNodeConnection *
 make_persistent_db_connection_noerror(
 	int db_node_id, char *hostname, int port, char *dbname, char *user, char *password, bool retry)
 {
-	ChildLocalBackendConnection *slot = NULL;
+	BackendNodeConnection *slot = NULL;
 	MemoryContext oldContext = CurrentMemoryContext;
 
 	PG_TRY();
@@ -235,7 +235,7 @@ free_startup_packet(StartupPacket* sp)
  * Discard connection and memory allocated by
  * make_persistent_db_connection().
  */
-void discard_persistent_db_connection(ChildLocalBackendConnection *cp)
+void discard_persistent_db_connection(BackendNodeConnection *cp)
 {
 	int			len;
 
@@ -263,7 +263,7 @@ void discard_persistent_db_connection(ChildLocalBackendConnection *cp)
 /*
  * send startup packet
  */
-void send_startup_packet(ChildLocalBackendConnection *cp, StartupPacket *sp)
+void send_startup_packet(BackendNodeConnection *cp, StartupPacket *sp)
 {
 	int			len;
 
@@ -679,7 +679,7 @@ select_load_balancing_node(void)
  *
  */
 PGVersion *
-Pgversion(ChildClusterConnection * backend)
+Pgversion(BackendClusterConnection * backend)
 {
 #define VERSION_BUF_SIZE	10
 	static	PGVersion	pgversion;

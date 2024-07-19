@@ -47,6 +47,7 @@
 #include "main/pool_internal_comms.h"
 #include "main/pgpool_logger.h"
 #include "main/pgpool_ipc.h"
+#include "connection_pool/backend_connection.h"
 #include "utils/elog.h"
 #include "utils/palloc.h"
 #include "utils/memutils.h"
@@ -185,7 +186,7 @@ static void system_will_go_down(int code, Datum arg);
 static char *process_name_from_pid(pid_t pid);
 static void sync_backend_from_watchdog(void);
 static void update_backend_quarantine_status(void);
-static int get_server_version(ChildLocalBackendConnection **slots, int node_id);
+static int get_server_version(BackendNodeConnection **slots, int node_id);
 static void get_info_from_conninfo(char *conninfo, char *host, int hostlen, char *port, int portlen);
 
 /*
@@ -392,6 +393,7 @@ PgpoolMain(bool discard_status, bool clear_memcache_oidmaps)
 		close(syslogPipe[0]);
 	syslogPipe[0] = -1;
 
+	InstallConnectionPool(GetGlobalConnectionPool());
 	initialize_shared_mem_objects(clear_memcache_oidmaps);
 
 	/*
@@ -2473,7 +2475,7 @@ trigger_failover_command(int node, const char *command_line,
 static POOL_NODE_STATUS pool_node_status[MAX_NUM_BACKENDS];
 
 POOL_NODE_STATUS *
-verify_backend_node_status(ChildLocalBackendConnection **slots)
+verify_backend_node_status(BackendNodeConnection **slots)
 {
 	POOL_SELECT_RESULT *res;
 	int			num_primaries = 0;
@@ -2763,7 +2765,7 @@ static int
 find_primary_node(void)
 {
 	BackendInfo *bkinfo;
-	ChildLocalBackendConnection *slots[MAX_NUM_BACKENDS];
+	BackendNodeConnection *slots[MAX_NUM_BACKENDS];
 	int			i;
 	POOL_NODE_STATUS *status;
 	int			primary = -1;
@@ -3057,7 +3059,7 @@ initialize_shared_mem_objects(bool clear_memcache_oidmaps)
 	size += MAXALIGN(pool_config->num_init_children * sizeof(pid_t));
 	size += MAXALIGN(pool_config->num_init_children * sizeof(pid_t));
 
-	size += MAXALIGN(get_global_connection_pool_shared_mem_size());
+	size += MAXALIGN(ConnectionPoolRequiredSharedMemSize());
 
 	if (pool_is_shmem_cache())
 	{
@@ -3090,8 +3092,13 @@ initialize_shared_mem_objects(bool clear_memcache_oidmaps)
 	/* get the shared memory from main segment*/
 	// con_info = (ConnectionInfo *)pool_shared_memory_segment_get_chunk(pool_coninfo_size());
 
-	ConnectionPool = (ConnectionPoolEntry *)pool_shared_memory_segment_get_chunk(get_global_connection_pool_shared_mem_size());
-	init_global_connection_pool();
+	if (ConnectionPoolRequiredSharedMemSize() > 0)
+	{
+		void* shmem_loc = pool_shared_memory_segment_get_chunk(ConnectionPoolRequiredSharedMemSize());
+		InitializeConnectionPool(shmem_loc);
+	}
+	// 	ConnectionPool = (ConnectionPoolEntry *)pool_shared_memory_segment_get_chunk(ConnectionPoolRequiredSharedMemSize());
+	// init_global_connection_pool();
 
 	process_info = (ProcessInfo *)pool_shared_memory_segment_get_chunk(pool_config->num_init_children * (sizeof(ProcessInfo)));
 	for (i = 0; i < pool_config->num_init_children; i++)
@@ -3810,25 +3817,25 @@ sync_backend_from_watchdog(void)
 	/* Kill children and restart them if needed */
 	if (need_to_restart_children)
 	{
-		ConnectionPoolEntry* connection_pool = GetConnectionPool();
-		for (i = 0; i < pool_config->max_pool_size; i++)
-		{
-			if (connection_pool[i].borrower_pid > 0 )
-			{
-				int		idx;
-				for (idx = 0; idx < down_node_ids_index; idx++)
-				{
-					int	node_id = down_node_ids[idx];
-					if (connection_pool[i].endPoint.load_balancing_node == node_id)
-					{
-						ereport(LOG,
-							(errmsg("child process with PID:%d needs restart, because pool %d uses backend %d",
-								connection_pool[i].borrower_pid, i, node_id)));
-						/* Do restart or whatever...			restart = true; */
-					}
-				}
-			}
-		}
+		// ConnectionPoolEntry* connection_pool = GetConnectionPool();
+		// for (i = 0; i < pool_config->max_pool_size; i++)
+		// {
+		// 	if (connection_pool[i].borrower_pid > 0 )
+		// 	{
+		// 		int		idx;
+		// 		for (idx = 0; idx < down_node_ids_index; idx++)
+		// 		{
+		// 			int	node_id = down_node_ids[idx];
+		// 			if (connection_pool[i].endPoint.load_balancing_node == node_id)
+		// 			{
+		// 				ereport(LOG,
+		// 					(errmsg("child process with PID:%d needs restart, because pool %d uses backend %d",
+		// 						connection_pool[i].borrower_pid, i, node_id)));
+		// 				/* Do restart or whatever...			restart = true; */
+		// 			}
+		// 		}
+		// 	}
+		// }
 
 		for (i = 0; i < pool_config->num_init_children; i++)
 		{
@@ -3929,44 +3936,44 @@ sync_backend_from_watchdog(void)
 	}
 }
 
-static void
-set_node_status_changed_in_pool(unsigned char request_details, bool primary_changed, bool inform_children, int *down_node_ids, int down_node_ids_index)
-{
-	ConnectionPoolEntry* connection_pool = GetConnectionPool();
-	int new_status = 0;
-	int i;
+// static void
+// set_node_status_changed_in_pool(unsigned char request_details, bool primary_changed, bool inform_children, int *down_node_ids, int down_node_ids_index)
+// {
+// 	ConnectionPoolEntry* connection_pool = GetConnectionPool();
+// 	int new_status = 0;
+// 	int i;
 
-	for (i = 0; i < pool_config->max_pool_size; i++)
-	{
-		if (connection_pool[i].status == POOL_ENTRY_EMPTY)
-			continue;
+// 	for (i = 0; i < pool_config->max_pool_size; i++)
+// 	{
+// 		if (connection_pool[i].status == POOL_ENTRY_EMPTY)
+// 			continue;
 
-		connection_pool[i].endPoint.node_status_changed |= new_status;
-		connection_pool[i].endPoint.node_status_last_changed_time = time(NULL);
+// 		connection_pool[i].endPoint.node_status_changed |= new_status;
+// 		connection_pool[i].endPoint.node_status_last_changed_time = time(NULL);
 
-		if (inform_children && connection_pool[i].borrower_pid > 0 )
-		{
-			int		idx;
-			for (idx = 0; idx < down_node_ids_index; idx++)
-			{
-				int	node_id = down_node_ids[idx];
-				if (connection_pool[i].endPoint.load_balancing_node == node_id)
-				{
-					ereport(LOG,
-						(errmsg("child process with PID:%d needs restart, because pool %d uses backend %d",
-							connection_pool[i].borrower_pid, i, node_id)));
-					/* Do restart or whatever...			restart = true; */
-				}
-			}
-		}
-	}
-}
+// 		if (inform_children && connection_pool[i].borrower_pid > 0 )
+// 		{
+// 			int		idx;
+// 			for (idx = 0; idx < down_node_ids_index; idx++)
+// 			{
+// 				int	node_id = down_node_ids[idx];
+// 				if (connection_pool[i].endPoint.load_balancing_node == node_id)
+// 				{
+// 					ereport(LOG,
+// 						(errmsg("child process with PID:%d needs restart, because pool %d uses backend %d",
+// 							connection_pool[i].borrower_pid, i, node_id)));
+// 					/* Do restart or whatever...			restart = true; */
+// 				}
+// 			}
+// 		}
+// 	}
+// }
 /*
  * Obtain backend server version number and cache it.  Note that returned
  * version number is in the static memory area.
  */
 static int
-get_server_version(ChildLocalBackendConnection **slots, int node_id)
+get_server_version(BackendNodeConnection **slots, int node_id)
 {
 	static int	server_versions[MAX_NUM_BACKENDS];
 

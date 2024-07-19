@@ -63,11 +63,11 @@
 memcached_st *memc;
 #endif
 
-static char *encode_key(const char *s, char *buf, ChildClusterConnection * backend);
+static char *encode_key(const char *s, char *buf, BackendClusterConnection * backend);
 #ifdef DEBUG
 static void dump_cache_data(const char *data, size_t len);
 #endif
-static int	pool_commit_cache(ChildClusterConnection * backend, char *query, char *data, size_t datalen, int num_oids, int *oids);
+static int	pool_commit_cache(BackendClusterConnection * backend, char *query, char *data, size_t datalen, int num_oids, int *oids);
 static int	send_cached_messages(POOL_CONNECTION * frontend, const char *qcache, int qcachelen);
 static void send_message(POOL_CONNECTION * conn, char kind, int len, const char *data);
 #ifdef USE_MEMCACHED
@@ -235,7 +235,7 @@ memqcache_register(char kind,
  * Commit SELECT results to cache storage.
  */
 static int
-pool_commit_cache(ChildClusterConnection * backend, char *query, char *data, size_t datalen, int num_oids, int *oids)
+pool_commit_cache(BackendClusterConnection * backend, char *query, char *data, size_t datalen, int num_oids, int *oids)
 {
 #ifdef USE_MEMCACHED
 	memcached_return rc;
@@ -345,7 +345,7 @@ pool_commit_cache(ChildClusterConnection * backend, char *query, char *data, siz
  * Commit SELECT system catalog results to cache storage.
  */
 int
-pool_catalog_commit_cache(ChildClusterConnection * backend, char *query, char *data, size_t datalen)
+pool_catalog_commit_cache(BackendClusterConnection * backend, char *query, char *data, size_t datalen)
 {
 #ifdef USE_MEMCACHED
 	memcached_return rc;
@@ -453,7 +453,7 @@ pool_catalog_commit_cache(ChildClusterConnection * backend, char *query, char *d
  * 1: not found
  */
 int
-pool_fetch_cache(ChildClusterConnection * backend, const char *query, char **buf, size_t *len)
+pool_fetch_cache(BackendClusterConnection * backend, const char *query, char **buf, size_t *len)
 {
 	char	   *ptr;
 	char		tmpkey[MAX_KEY];
@@ -555,7 +555,7 @@ pool_fetch_cache(ChildClusterConnection * backend, const char *query, char **buf
  * create cache key as md5(username + query string + database name)
  */
 static char *
-encode_key(const char *s, char *buf, ChildClusterConnection * backend)
+encode_key(const char *s, char *buf, BackendClusterConnection * backend)
 {
 	char	   *strkey;
 	int			u_length;
@@ -729,7 +729,7 @@ delete_cache_on_memcached(const char *key)
  */
 POOL_STATUS
 pool_fetch_from_memory_cache(POOL_CONNECTION * frontend,
-							 ChildClusterConnection * backend,
+							 BackendClusterConnection * backend,
 							 char *contents, bool *foundp)
 {
 	char	   *qcache;
@@ -1499,7 +1499,7 @@ pool_get_database_oid(void)
  */
 	int			oid = 0;
 	static POOL_RELCACHE * relcache;
-	ChildClusterConnection *backend;
+	BackendClusterConnection *backend;
 
 	backend = pool_get_session_context(false)->backend;
 
@@ -1538,7 +1538,7 @@ pool_get_database_oid_from_dbname(char *dbname)
 	POOL_SELECT_RESULT *res;
 	char		query[1024];
 
-	ChildClusterConnection *backend;
+	BackendClusterConnection *backend;
 
 	backend = pool_get_session_context(false)->backend;
 
@@ -3562,7 +3562,7 @@ pool_check_and_discard_cache_buffer(int num_oids, int *oids)
  * For other case At Ready for Query handle query cache.
  */
 void
-pool_handle_query_cache(ChildClusterConnection * backend, char *query, Node *node, char state)
+pool_handle_query_cache(BackendClusterConnection * backend, char *query, Node *node, char state)
 {
 	POOL_SESSION_CONTEXT *session_context;
 	pool_sigset_t oldmask;

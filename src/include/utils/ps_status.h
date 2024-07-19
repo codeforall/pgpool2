@@ -22,6 +22,7 @@
 #define ps_status_h
 
 #include "pool.h"
+#include "connection_pool/connection_pool.h"
 #include <netdb.h>
 
 extern char remote_ps_data[NI_MAXHOST + NI_MAXSERV + 2];	/* used for set_ps_display */
@@ -31,7 +32,7 @@ extern void init_ps_display(const char *username, const char *dbname,
 				const char *host_info, const char *initial_str);
 extern void set_ps_display(const char *activity, bool force);
 extern const char *get_ps_display(int *displen);
-extern void pool_ps_idle_display(ChildClusterConnection * backend);
+extern void pool_ps_idle_display(BackendClusterConnection * backend);
 
 
 #endif /* ps_status_h */

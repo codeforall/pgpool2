@@ -52,7 +52,7 @@ static int	Elevel = DEBUG2;
  * Initialize per session context
  */
 void
-pool_init_session_context(POOL_CONNECTION * frontend, ChildClusterConnection * backend)
+pool_init_session_context(POOL_CONNECTION * frontend, BackendClusterConnection * backend)
 {
 	session_context = &session_context_d;
 	ProcessInfo *process_info;
@@ -213,7 +213,7 @@ pool_select_new_load_balance_node(bool noerror)
 	if (session_context)
 	{
 		int node_id;
-		BackendEndPoint* backend_end_point = GetChildBorrowedBackendEndPoint();
+		PooledBackendClusterConnection *backend_end_point = GetCurrentPooledBackendClusterConnection();
 		if (!RAW_MODE && pool_config->load_balance_mode)
 		{
 			node_id = select_load_balancing_node();

@@ -22,11 +22,13 @@
 #ifndef pool_auth_h
 #define pool_auth_h
 
-extern void connection_do_auth(ChildClusterConnection *backend_con, int slot_no,
-							   ChildLocalBackendConnection *con_slot, POOL_CONNECTION *frontend, char *password, StartupPacket *sp);
+#include "connection_pool/connection_pool.h"
 
-extern int	pool_do_auth(POOL_CONNECTION * frontend, ChildClusterConnection * backend);
-extern int	pool_do_reauth(POOL_CONNECTION * frontend, ChildClusterConnection * cp);
+extern void connection_do_auth(BackendClusterConnection *backend_con, int slot_no,
+							   BackendNodeConnection *con_slot, POOL_CONNECTION *frontend, char *password, StartupPacket *sp);
+
+extern int	pool_do_auth(POOL_CONNECTION * frontend, BackendClusterConnection * backend);
+extern int	pool_do_reauth(POOL_CONNECTION * frontend, BackendClusterConnection * cp);
 extern void authenticate_frontend(POOL_CONNECTION * frontend);
 
 extern void pool_random_salt(char *md5Salt);

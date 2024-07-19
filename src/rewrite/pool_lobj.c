@@ -53,7 +53,7 @@
  */
 char *
 pool_rewrite_lo_creat(char kind, char *packet, int packet_len,
-					  POOL_CONNECTION * frontend, ChildClusterConnection * backend, int *len)
+					  POOL_CONNECTION * frontend, BackendClusterConnection * backend, int *len)
 {
 #define LO_CREAT_OID_QUERY "SELECT oid FROM pg_catalog.pg_proc WHERE proname = 'lo_creat' and pronamespace = (SELECT oid FROM pg_catalog.pg_namespace WHERE nspname = 'pg_catalog')"
 

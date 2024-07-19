@@ -105,7 +105,7 @@ pool_discard_relcache(POOL_RELCACHE * relcache)
  * If not found in cache, do the query and store the result into cache and return it.
  */
 void *
-pool_search_relcache(POOL_RELCACHE * relcache, ChildClusterConnection * backend, char *table)
+pool_search_relcache(POOL_RELCACHE * relcache, BackendClusterConnection * backend, char *table)
 {
 	char	   *dbname;
 	int			i;

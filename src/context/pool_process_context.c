@@ -165,13 +165,13 @@ pool_coninfo(int child, int connection_pool, int backend)
  * This flag is used to handle pg_terminate_backend()
  */
 void
-pool_set_connection_will_be_terminated(BackendConnection * backend_connection)
+pool_set_connection_will_be_terminated(PooledBackendNodeConnection *backend_connection)
 {
 	backend_connection->swallow_termination = true;
 }
 
 void
-pool_unset_connection_will_be_terminated(BackendConnection * backend_connection)
+pool_unset_connection_will_be_terminated(PooledBackendNodeConnection *backend_connection)
 {
 	backend_connection->swallow_termination = false;
 }
@@ -182,7 +182,7 @@ pool_unset_connection_will_be_terminated(BackendConnection * backend_connection)
 void
 pool_coninfo_set_frontend_connected(void)
 {
-	ChildClusterConnection *backend_con = GetChildClusterConnection();
+	BackendClusterConnection *backend_con = GetBackendClusterConnection();
 	if (!backend_con->backend_end_point)
 	{
 			elog(WARNING, "failed to get pooled connection for child process while marking the frontend is connected for pool");
@@ -200,7 +200,7 @@ pool_coninfo_set_frontend_connected(void)
 void
 pool_coninfo_unset_frontend_connected(void)
 {
-	ChildClusterConnection *backend_con = GetChildClusterConnection();
+	BackendClusterConnection *backend_con = GetBackendClusterConnection();
 	if (!backend_con->backend_end_point)
 	{
 			elog(WARNING, "failed to get pooled connection for child process while marking the frontend is not connected for pool");

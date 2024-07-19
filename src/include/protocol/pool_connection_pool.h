@@ -24,53 +24,36 @@
 
 #include "pool.h"
 
-extern ConnectionPoolEntry	*ConnectionPool;
-
 extern void pool_init_cp(int parent_link_fd);
 
 bool DiscardBackendConnection(bool release_pool);
 bool ClearChildPooledConnectionData(void);
 
-extern ChildClusterConnection *GetChildClusterConnection(void);
-extern bool ConnectBackendSocktes(void);
+extern BackendClusterConnection *GetBackendClusterConnection(void);
 extern void pool_discard_cp(char *user, char *database, int protoMajor);
 extern void pool_backend_timer(void);
-extern void pool_connection_pool_timer(ChildClusterConnection * backend);
+extern void pool_connection_pool_timer(BackendClusterConnection * backend);
 extern RETSIGTYPE pool_backend_timer_handler(int sig);
+
 extern int	connect_inet_domain_socket(int slot, bool retry);
 extern int	connect_unix_domain_socket(int slot, bool retry);
 extern int	connect_inet_domain_socket_by_port(char *host, int port, bool retry);
 extern int	connect_unix_domain_socket_by_port(int port, char *socket_dir, bool retry);
+
 extern int	pool_pool_index(void);
 extern void close_all_backend_connections(void);
 extern void update_pooled_connection_count(void);
-extern int	in_use_backend_id(ChildClusterConnection *pool);
+extern int	in_use_backend_id(BackendClusterConnection *pool);
 
 
 /* Global connection pool */
-extern ConnectionPoolEntry* GetConnectionPool(void);
-extern BackendEndPoint* GetChildBorrowedBackendEndPoint(void);
-extern bool StorePasswordInformation(char* password, int pwd_size, PasswordType passwordType);
-extern bool SaveAuthKindForBackendConnection(int auth_kind);
-extern int GetAuthKindForCurrentPoolBackendConnection(void);
 
 extern size_t get_global_connection_pool_shared_mem_size(void);
 extern void init_global_connection_pool(void);
 extern bool SetupNewConnectionIntoChild(StartupPacket* sp);
-extern bool ImportPoolConnectionIntoChild(int pool_id, int *sockets, LEASE_TYPES lease_type);
-extern bool LeasePooledConnectionToChild(IPC_Endpoint* ipc_endpoint);
 extern int GetPooledConnectionForLending(char *user, char *database, int protoMajor, LEASE_TYPES *lease_type);
-extern bool ExportLocalBackendConnectionToPool(void);
-extern bool ExportLocalSocketsToBackendPool(void);
-extern bool InstallSocketsInConnectionPool(ConnectionPoolEntry* pool_entry, int *sockets);
-extern BackendEndPoint* GetBackendEndPoint(int pool_id);
-extern ConnectionPoolEntry* GetConnectionPoolEntry(int pool_id);
-extern ConnectionPoolEntry* GetChildConnectionPoolEntry(void);
-extern bool ChildClusterConnectionNeedPush(void);
-extern bool ReleasePooledConnection(ConnectionPoolEntry* pool_entry, IPC_Endpoint* ipc_endpoint, bool need_cleanup, bool discard);
+extern PooledBackendClusterConnection* GetPooledBackendClusterConnection(int pool_id);
 
-extern BackendConnection* GetBackendConnectionForBackendPID(int backend_pid, int *backend_node_id);
-extern BackendEndPoint* GetBackendEndPointForCancelPacket(CancelPacket* cp);
-extern void ClearChildClusterConnection(void);
+extern PooledBackendClusterConnection* GetPooledBackendClusterConnectionForCancelPacket(CancelPacket* cp);
 
 #endif /* pool_connection_pool_h */

@@ -249,11 +249,11 @@ extern int	pool_hash_delete(POOL_QUERY_HASH * key);
 extern uint32 hash_any(unsigned char *k, int keylen);
 
 extern POOL_STATUS pool_fetch_from_memory_cache(POOL_CONNECTION * frontend,
-												ChildClusterConnection * backend,
+												BackendClusterConnection * backend,
 												char *contents, bool *foundp);
 
-extern int pool_fetch_cache(ChildClusterConnection * backend, const char *query, char **buf, size_t *len);
-extern int pool_catalog_commit_cache(ChildClusterConnection * backend, char *query, char *data, size_t datalen);
+extern int pool_fetch_cache(BackendClusterConnection * backend, const char *query, char **buf, size_t *len);
+extern int pool_catalog_commit_cache(BackendClusterConnection * backend, char *query, char *data, size_t datalen);
 
 extern bool pool_is_likely_select(char *query);
 extern bool pool_is_table_in_unsafe_list(const char *table_name);
@@ -277,7 +277,7 @@ extern POOL_QUERY_CACHE_ARRAY * pool_create_query_cache_array(void);
 extern void pool_discard_query_cache_array(POOL_QUERY_CACHE_ARRAY * cache_array);
 
 extern POOL_TEMP_QUERY_CACHE * pool_create_temp_query_cache(char *query);
-extern void pool_handle_query_cache(ChildClusterConnection * backend, char *query, Node *node, char state);
+extern void pool_handle_query_cache(BackendClusterConnection * backend, char *query, Node *node, char state);
 
 extern int	pool_init_memqcache_stats(void);
 extern POOL_QUERY_CACHE_STATS * pool_get_memqcache_stats(void);

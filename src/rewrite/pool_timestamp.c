@@ -54,7 +54,7 @@ typedef struct
 typedef struct
 {
 	A_Const    *ts_const;
-	ChildClusterConnection *backend;
+	BackendClusterConnection *backend;
 	char	   *relname;
 	int			num_params;		/* num of original params (for Parse) */
 	bool		rewrite_to_params;	/* true if timestamp is rewritten to param
@@ -70,10 +70,10 @@ static bool isStringConst(Node *node, const char *str);
 static bool rewrite_timestamp_walker(Node *node, void *context);
 static bool rewrite_timestamp_insert(InsertStmt *i_stmt, TSRewriteContext * ctx);
 static bool rewrite_timestamp_update(UpdateStmt *u_stmt, TSRewriteContext * ctx);
-static char *get_current_timestamp(ChildClusterConnection * backend);
+static char *get_current_timestamp(BackendClusterConnection * backend);
 static Node *makeTsExpr(TSRewriteContext * ctx);
 static TypeCast *makeTypeCastFromSvfOp(SQLValueFunctionOp op);
-static A_Const *makeStringConstFromQuery(ChildClusterConnection * backend, char *expression);
+static A_Const *makeStringConstFromQuery(BackendClusterConnection * backend, char *expression);
 bool		raw_expression_tree_walker(Node *node, bool (*walker) (), void *context);
 
 POOL_RELCACHE *ts_relcache;
@@ -483,7 +483,7 @@ rewrite_timestamp_walker(Node *node, void *context)
  * Get `now()' from MAIN node
  */
 static char *
-get_current_timestamp(ChildClusterConnection * backend)
+get_current_timestamp(BackendClusterConnection * backend)
 {
 	POOL_SELECT_RESULT *res;
 	static char timestamp[64];
@@ -786,7 +786,7 @@ rewrite_timestamp_update(UpdateStmt *u_stmt, TSRewriteContext * ctx)
  * returns query string as palloced string, or NULL if not to need rewrite.
  */
 char *
-rewrite_timestamp(ChildClusterConnection * backend, Node *node,
+rewrite_timestamp(BackendClusterConnection * backend, Node *node,
 				  bool rewrite_to_params, POOL_SENT_MESSAGE * message)
 {
 	TSRewriteContext ctx;
@@ -1068,7 +1068,7 @@ rewrite_timestamp(ChildClusterConnection * backend, Node *node,
  * rewrite Bind message to add parameter values
  */
 char *
-bind_rewrite_timestamp(ChildClusterConnection * backend,
+bind_rewrite_timestamp(BackendClusterConnection * backend,
 					   POOL_SENT_MESSAGE * message,
 					   const char *orig_msg, int *len)
 {
@@ -1250,7 +1250,7 @@ bind_rewrite_timestamp(ChildClusterConnection * backend,
 
 /* make A_Const of T_String from "SELECT <expression>"*/
 static A_Const *
-makeStringConstFromQuery(ChildClusterConnection * backend, char *expression)
+makeStringConstFromQuery(BackendClusterConnection * backend, char *expression)
 {
 	A_Const    *con;
 	POOL_SELECT_RESULT *res;

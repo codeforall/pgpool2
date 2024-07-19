@@ -23,6 +23,7 @@
 #define pool_pg_utils_h
 
 #include "pool.h"
+#include "connection_pool/backend_connection.h"
 
 #define MAX_PG_VERSION_STRING	512
 
@@ -40,17 +41,17 @@ typedef struct
 	char	version_string[MAX_PG_VERSION_STRING+1];	/* original version string */
 }			PGVersion;
 
-extern void send_startup_packet(ChildLocalBackendConnection *cp, StartupPacket *sp);
+extern void send_startup_packet(BackendNodeConnection *cp, StartupPacket *sp);
 extern void pool_free_startup_packet(StartupPacket *sp);
 
-extern ChildLocalBackendConnection *make_persistent_db_connection(
+extern BackendNodeConnection *make_persistent_db_connection(
 	int db_node_id, char *hostname, int port, char *dbname, char *user, char *password, bool retry);
-extern ChildLocalBackendConnection *make_persistent_db_connection_noerror(
+extern BackendNodeConnection *make_persistent_db_connection_noerror(
 	int db_node_id, char *hostname, int port, char *dbname, char *user, char *password, bool retry);
-extern void discard_persistent_db_connection(ChildLocalBackendConnection *cp);
+extern void discard_persistent_db_connection(BackendNodeConnection *cp);
 extern int	select_load_balancing_node(void);
 
-extern PGVersion *Pgversion(ChildClusterConnection * backend);
+extern PGVersion *Pgversion(BackendClusterConnection * backend);
 
 /* pool_pg_utils.c */
 extern bool si_snapshot_prepared(void);

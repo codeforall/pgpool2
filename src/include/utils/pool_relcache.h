@@ -26,6 +26,8 @@
 #ifndef POOL_RELCACHE_H
 #define POOL_RELCACHE_H
 
+#include "connection_pool/backend_connection.h"
+
 /* ------------------------
  * Relation cache structure
  *-------------------------
@@ -75,7 +77,7 @@ extern POOL_RELCACHE * pool_create_relcache(int cachesize, char *sql,
 											func_ptr register_func, func_ptr unregister_func,
 											bool issessionlocal);
 extern void pool_discard_relcache(POOL_RELCACHE * relcache);
-extern void *pool_search_relcache(POOL_RELCACHE * relcache, ChildClusterConnection * backend, char *table);
+extern void *pool_search_relcache(POOL_RELCACHE * relcache, BackendClusterConnection * backend, char *table);
 extern char *remove_quotes_and_schema_from_relname(char *table);
 extern void *int_register_func(POOL_SELECT_RESULT * res);
 extern void *int_unregister_func(void *data);

@@ -27,7 +27,7 @@
 #define POOL_STREAM_H
 
 #include "utils/socket_stream.h"
-
+#include "connection_pool/connection_pool.h"
 #define READBUFSZ 1024
 #define WRITEBUFSZ 8192
 

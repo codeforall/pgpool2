@@ -63,7 +63,7 @@
 
 static POOL_STATUS pool_send_backend_key_data(POOL_CONNECTION * frontend, int pid, int key, int protoMajor);
 static int	do_clear_text_password(POOL_CONNECTION * backend, POOL_CONNECTION * frontend, int reauth, int protoMajor);
-static void pool_send_auth_fail(POOL_CONNECTION * frontend, ChildClusterConnection * cp);
+static void pool_send_auth_fail(POOL_CONNECTION * frontend, BackendClusterConnection * cp);
 static int	do_crypt(POOL_CONNECTION * backend, POOL_CONNECTION * frontend, int reauth, int protoMajor);
 static int do_md5(POOL_CONNECTION * backend, POOL_CONNECTION * frontend, int reauth, int protoMajor,
 	   char *storedPassword, PasswordType passwordType);
@@ -90,8 +90,8 @@ static bool get_auth_password(POOL_CONNECTION * backend, POOL_CONNECTION * front
  * Do authentication. Assuming the caller is
  * make_persistent_db_connection() when.
  */
-void connection_do_auth(ChildClusterConnection *backend_con, int slot_no,
-						ChildLocalBackendConnection *con_slot, POOL_CONNECTION *frontend, char *password, StartupPacket *sp)
+void connection_do_auth(BackendClusterConnection *backend_con, int slot_no,
+						BackendNodeConnection *con_slot, POOL_CONNECTION *frontend, char *password, StartupPacket *sp)
 {
 	char		kind;
 	int			length;
@@ -103,7 +103,7 @@ void connection_do_auth(ChildClusterConnection *backend_con, int slot_no,
 	bool		keydata_done;
 	bool		pooled_con = false;
 	PasswordType passwordType = PASSWORD_TYPE_UNKNOWN;
-	ChildLocalBackendConnection *cp = backend_con ? cp = &backend_con->slots[slot_no] : con_slot;
+	BackendNodeConnection *cp = backend_con ? cp = &backend_con->slots[slot_no] : con_slot;
 
 	/*
 	 * read kind expecting 'R' packet (authentication response)
@@ -387,7 +387,7 @@ void connection_do_auth(ChildClusterConnection *backend_con, int slot_no,
  * 0.
 */
 int
-pool_do_auth(POOL_CONNECTION * frontend, ChildClusterConnection * cp)
+pool_do_auth(POOL_CONNECTION * frontend, BackendClusterConnection * cp)
 {
 	signed char kind;
 	int			pid;
@@ -860,7 +860,7 @@ pool_do_auth(POOL_CONNECTION * frontend, ChildClusterConnection * cp)
 * do re-authentication for reused connection. if success return 0 otherwise throws ereport.
 */
 int
-pool_do_reauth(POOL_CONNECTION * frontend, ChildClusterConnection * cp)
+pool_do_reauth(POOL_CONNECTION * frontend, BackendClusterConnection * cp)
 {
 	int			protoMajor = MAJOR(cp);
 	int			authkind = GetAuthKindForCurrentPoolBackendConnection();
@@ -921,7 +921,7 @@ pool_do_reauth(POOL_CONNECTION * frontend, ChildClusterConnection * cp)
 * send authentication failure message text to frontend
 */
 static void
-pool_send_auth_fail(POOL_CONNECTION * frontend, ChildClusterConnection * cp)
+pool_send_auth_fail(POOL_CONNECTION * frontend, BackendClusterConnection * cp)
 {
 	int			messagelen;
 	char	   *errmessage;
@@ -1128,7 +1128,7 @@ do_clear_text_password(POOL_CONNECTION * backend, POOL_CONNECTION * frontend, in
 	/* connection reusing? */
 	if (reauth)
 	{
-		BackendEndPoint* backend_endpoint = GetChildBorrowedBackendEndPoint();
+		PooledBackendClusterConnection *backend_endpoint = GetCurrentPooledBackendClusterConnection();
 		if (!backend_endpoint || backend_endpoint->pwd_size <= 0)
 		{
 			ereport(ERROR,
@@ -1235,7 +1235,7 @@ do_crypt(POOL_CONNECTION * backend, POOL_CONNECTION * frontend, int reauth, int 
 	/* connection reusing? */
 	if (reauth)
 	{
-		BackendEndPoint* backend_endpoint = GetChildBorrowedBackendEndPoint();
+		PooledBackendClusterConnection *backend_endpoint = GetCurrentPooledBackendClusterConnection();
 		if (!backend_endpoint || backend_endpoint->pwd_size <= 0)
 		{
 			ereport(ERROR,
@@ -1711,7 +1711,7 @@ do_md5_single_backend(POOL_CONNECTION * backend, POOL_CONNECTION * frontend, int
 	/* connection reusing? compare it with saved password */
 	if (reauth)
 	{
-		BackendEndPoint* backend_endpoint = GetChildBorrowedBackendEndPoint();
+		PooledBackendClusterConnection *backend_endpoint = GetCurrentPooledBackendClusterConnection();
 		if (!backend_endpoint || backend_endpoint->pwd_size <= 0)
 		{
 			ereport(ERROR,
@@ -1780,7 +1780,7 @@ get_auth_password(POOL_CONNECTION * backend, POOL_CONNECTION * frontend, int rea
 		}
 		else if (reauth)
 		{
-			BackendEndPoint* backend_endpoint = GetChildBorrowedBackendEndPoint();
+			PooledBackendClusterConnection *backend_endpoint = GetCurrentPooledBackendClusterConnection();
 			if (backend_endpoint && backend_endpoint->pwd_size > 0)
 			{
 				*password = backend_endpoint->password;

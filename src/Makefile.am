@@ -68,7 +68,11 @@ pgpool_SOURCES = main/main.c \
 	utils/statistics.c \
 	utils/pool_health_check_stats.c \
 	utils/psqlscan.l \
-	utils/pgstrcasecmp.c
+	utils/pgstrcasecmp.c \
+	connection_pool/backend_connection.c \
+	connection_pool/connection_pool.c \
+	connection_pool/global_connection_pool.c
+
 
 utils/psqlscan.c: utils/psqlscan.l
 	$(LEX) -o'utils/psqlscan.c' $<

@@ -21,6 +21,7 @@
  * Process pgPool-II "SHOW" queries.
  */
 #include "pool.h"
+#include "utils/pool_process_reporting.h"
 #include "main/health_check.h"
 #include "protocol/pool_proto_modules.h"
 #include "protocol/pool_process_query.h"
@@ -37,7 +38,7 @@
 #include <time.h>
 #include <netinet/in.h>
 
-static void send_row_description_and_data_rows(POOL_CONNECTION * frontend, ChildClusterConnection * backend,
+static void send_row_description_and_data_rows(POOL_CONNECTION * frontend, BackendClusterConnection * backend,
 											   short num_fields, char **field_names, int *offsettbl,
 											   char *data, int row_size, int nrows);
 static void write_one_field(POOL_CONNECTION * frontend, char *field);
@@ -46,7 +47,7 @@ static char *db_node_status(int node);
 static char *db_node_role(int node);
 
 void
-send_row_description(POOL_CONNECTION * frontend, ChildClusterConnection * backend,
+send_row_description(POOL_CONNECTION * frontend, BackendClusterConnection * backend,
 					 short num_fields, char **field_names)
 {
 	static char *cursorname = "blank";
@@ -124,7 +125,7 @@ send_row_description(POOL_CONNECTION * frontend, ChildClusterConnection * backen
  * to the command complete message.
  */
 void
-send_complete_and_ready(POOL_CONNECTION * frontend, ChildClusterConnection * backend, const char *message, const int num_rows)
+send_complete_and_ready(POOL_CONNECTION * frontend, BackendClusterConnection * backend, const char *message, const int num_rows)
 {
 	int			len;
 	int			msg_len;
@@ -1199,7 +1200,7 @@ get_config(int *nrows)
 }
 
 void
-send_config_var_detail_row(POOL_CONNECTION * frontend, ChildClusterConnection * backend, const char *name, const char *value, const char *description)
+send_config_var_detail_row(POOL_CONNECTION * frontend, BackendClusterConnection * backend, const char *name, const char *value, const char *description)
 {
 	int			size;
 	int			hsize;
@@ -1262,7 +1263,7 @@ send_config_var_detail_row(POOL_CONNECTION * frontend, ChildClusterConnection * 
 }
 
 void
-send_config_var_value_only_row(POOL_CONNECTION * frontend, ChildClusterConnection * backend, const char *value)
+send_config_var_value_only_row(POOL_CONNECTION * frontend, BackendClusterConnection * backend, const char *value)
 {
 	int			size;
 	int			hsize;
@@ -1304,7 +1305,7 @@ send_config_var_value_only_row(POOL_CONNECTION * frontend, ChildClusterConnectio
 }
 
 void
-config_reporting(POOL_CONNECTION * frontend, ChildClusterConnection * backend)
+config_reporting(POOL_CONNECTION * frontend, BackendClusterConnection * backend)
 {
 	static char *field_names[] = {"item", "value", "description"};
 	static unsigned char nullmap[2] = {0xff, 0xff};
@@ -1474,7 +1475,7 @@ get_nodes(int *nrows, int node_id)
  * SHOW pool_nodes;
  */
 void
-nodes_reporting(POOL_CONNECTION * frontend, ChildClusterConnection * backend)
+nodes_reporting(POOL_CONNECTION * frontend, BackendClusterConnection * backend)
 {
 	static char *field_names[] = {"node_id", "hostname", "port", "status", "pg_status", "lb_weight", "role",
 								  "pg_role", "select_cnt", "load_balance_node", "replication_delay",
@@ -1705,7 +1706,7 @@ get_pools(int *nrows)
 	{
 		ProcessInfo *pi = NULL;
 
-		ConnectionPoolEntry* pool_entry =  GetConnectionPoolEntry(pool_id);
+		ConnectionPoolEntry *pool_entry = GetGlobalConnectionPoolEntry(pool_id);
 		if (pool_entry->borrower_proc_info_id >= 0)
 			pi = &process_info[pool_entry->borrower_proc_info_id];
 
@@ -1848,7 +1849,7 @@ get_pools(int *nrows)
  * SHOW　pool_pools;
  */
 void
-pools_reporting(POOL_CONNECTION * frontend, ChildClusterConnection * backend)
+pools_reporting(POOL_CONNECTION * frontend, BackendClusterConnection * backend)
 {
 	short num_fields;
 	static char *field_names[] = {"pool_pid", "start_time", "client_connection_count", "pool_id",
@@ -1973,7 +1974,7 @@ get_processes(int *nrows)
  * SHOW pool_processes
  */
 void
-processes_reporting(POOL_CONNECTION * frontend, ChildClusterConnection * backend)
+processes_reporting(POOL_CONNECTION * frontend, BackendClusterConnection * backend)
 {
 	static char *field_names[] = {"pool_pid", "start_time", "client_connection_count",
 								  "database", "username", "backend_connection_time", "pool_counter", "status"};
@@ -2016,7 +2017,7 @@ get_version(void)
  * SHOW pool_version;
  */
 void
-version_reporting(POOL_CONNECTION * frontend, ChildClusterConnection * backend)
+version_reporting(POOL_CONNECTION * frontend, BackendClusterConnection * backend)
 {
 	static char *field_names[] = {"pool_version"};
 	static int offsettbl[] = {
@@ -2040,7 +2041,7 @@ version_reporting(POOL_CONNECTION * frontend, ChildClusterConnection * backend)
  * Show in memory cache reporting
  */
 void
-cache_reporting(POOL_CONNECTION * frontend, ChildClusterConnection * backend)
+cache_reporting(POOL_CONNECTION * frontend, BackendClusterConnection * backend)
 {
 	static char *field_names[] = {"num_cache_hits", "num_selects", "cache_hit_ratio", "num_hash_entries", "used_hash_entries", "num_cache_entries", "used_cache_entries_size", "free_cache_entries_size", "fragment_cache_entries_size"};
 	short		num_fields = sizeof(field_names) / sizeof(char *);
@@ -2255,7 +2256,7 @@ get_health_check_stats(int *nrows)
  * SHOW health_check_stats;
  */
 void
-show_health_check_stats(POOL_CONNECTION * frontend, ChildClusterConnection * backend)
+show_health_check_stats(POOL_CONNECTION * frontend, BackendClusterConnection * backend)
 {
 	static char *field_names[] = {"node_id", "hostname", "port", "status", "role", "last_status_change",
 								  "total_count", "success_count", "fail_count", "skip_count", "retry_count",
@@ -2357,7 +2358,7 @@ get_backend_stats(int *nrows)
  * SHOW backend_stats;
  */
 void
-show_backend_stats(POOL_CONNECTION * frontend, ChildClusterConnection * backend)
+show_backend_stats(POOL_CONNECTION * frontend, BackendClusterConnection * backend)
 {
 	static char *field_names[] = {"node_id", "hostname", "port", "status", "role",
 								  "select_cnt", "insert_cnt", "update_cnt", "delete_cnt", "ddl_cnt", "other_cnt",
@@ -2413,7 +2414,7 @@ show_backend_stats(POOL_CONNECTION * frontend, ChildClusterConnection * backend)
  *
  * nrows: number of rows in data. 
  */
-static void send_row_description_and_data_rows(POOL_CONNECTION * frontend, ChildClusterConnection * backend,
+static void send_row_description_and_data_rows(POOL_CONNECTION * frontend, BackendClusterConnection * backend,
 											   short num_fields, char **field_names, int *offsettbl,
 											   char *data, int row_size, int nrows)
 {
@@ -2577,7 +2578,7 @@ static
 char *db_node_role(int node)
 {
 	BackendInfo *bkinfo;
-	ChildLocalBackendConnection *slots[MAX_NUM_BACKENDS];
+	BackendNodeConnection *slots[MAX_NUM_BACKENDS];
 	POOL_SELECT_RESULT *res;
 	char	*user;
 	char	*password;
