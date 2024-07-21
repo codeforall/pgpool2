@@ -121,22 +121,6 @@ typedef enum
  * we use forward declaration here
  */
 typedef struct HbaLine HbaLine;
-
-// typedef struct BackendConnection
-// {
-// 	ConnectionInfo conn_info;
-// 	int			pid;			/* backend process id */
-// 	int			key;			/* cancel key */
-// 	int			counter;		/* used counter */
-// 	time_t		create_time;	/* connection creation time */
-// 	int 		socket;
-//     bool        connected;
-
-// 	char		salt[4];		/* password salt */
-
-// 	volatile bool swallow_termination;
-// }BackendConnection;
-
 /*
  * In protocol 3.0 and later, the startup packet length is not fixed, but
  * we set an arbitrary limit on it anyway.	This is just to prevent simple

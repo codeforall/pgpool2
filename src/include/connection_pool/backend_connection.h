@@ -5,7 +5,7 @@
 
 typedef struct PooledBackendNodeConnection
 {
-    ConnectionInfo conn_info;
+    // ConnectionInfo conn_info;
     int pid;            /* backend process id */
     int key;            /* cancel key */
     int counter;        /* used counter */
@@ -26,7 +26,7 @@ typedef struct PooledBackendClusterConnection
     int load_balancing_node;
     char startup_packet_data[MAX_STARTUP_PACKET_LENGTH]; /* startup packet info */
     StartupPacket sp;                                    /* startup packet info */
-    int key;                                             /* cancel key */
+    // int key;                                             /* cancel key */
     /*
      * following are used to remember when re-use the authenticated connection
      */
@@ -185,8 +185,10 @@ extern int GetAuthKindForCurrentPoolBackendConnection(void);
 extern void ImportStartupPacketIntoChild(StartupPacket *sp, char *startup_packet_data);
 extern bool ConnectBackendSocketForBackendCluster(int slot_no);
 
-/* in pgpool_main.c */
-extern POOL_NODE_STATUS *verify_backend_node_status(BackendNodeConnection **slots);
+extern int check_socket_status(int fd);
+    /* in pgpool_main.c */
+    extern POOL_NODE_STATUS *
+    verify_backend_node_status(BackendNodeConnection **slots);
 /* worker_child*/
 extern int get_query_result(BackendNodeConnection **slots, int backend_id, char *query, POOL_SELECT_RESULT **res);
 

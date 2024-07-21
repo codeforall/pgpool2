@@ -66,11 +66,14 @@ extern bool ClusterConnectionNeedPush(void);
 extern PooledBackendNodeConnection *GetBackendNodeConnectionForBackendPID(int backend_pid, int *backend_node_id);
 extern PooledBackendClusterConnection *GetBackendEndPointForCancelPacket(CancelPacket *cp);
 
-    /* from global_connection_pool.c */
-    extern const ConnectionPoolRoutine *GetGlobalConnectionPool(void);
+/* from global_connection_pool.c */
+extern const ConnectionPoolRoutine *GetGlobalConnectionPool(void);
 extern ConnectionPoolEntry *GetGlobalConnectionPoolEntry(int pool_id);
 extern bool InstallSocketsInConnectionPool(ConnectionPoolEntry *pool_entry, int *sockets);
 extern PooledBackendClusterConnection *GetGlobalPooledBackendClusterConnection(int pool_id);
 extern bool GlobalPoolReleasePooledConnection(ConnectionPoolEntry *pool_entry, IPC_Endpoint *ipc_endpoint, bool need_cleanup, bool discard);
 extern bool GlobalPoolLeasePooledConnectionToChild(IPC_Endpoint *ipc_endpoint);
+
+/* from classic_connection_pool.c */
+extern const ConnectionPoolRoutine *GetClassicConnectionPool(void);
 #endif // CONNECTION_POOL_H

@@ -12,6 +12,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <errno.h>
+#include <sys/select.h>
 
 BackendClusterConnection clusterConnection = {.backend_end_point = NULL};
 
@@ -351,4 +353,36 @@ ConnectBackendSocketForBackendCluster(int slot_no)
     cp->con->pooled_backend_ref = &clusterConnection.backend_end_point->conn_slots[slot_no];
     cp->con->pooled_backend_ref->create_time = time(NULL);
     return true;
+}
+
+/*
+ * check_socket_status() * RETURN : 0 = > OK
+ * -1 = > broken socket.
+ */
+
+int check_socket_status(int fd)
+{
+    fd_set rfds;
+    int result;
+    struct timeval t;
+
+    for (;;)
+    {
+        FD_ZERO(&rfds);
+        FD_SET(fd, &rfds);
+
+        t.tv_sec = t.tv_usec = 0;
+
+        result = select(fd + 1, &rfds, NULL, NULL, &t);
+        if (result < 0 && errno == EINTR)
+        {
+            continue;
+        }
+        else
+        {
+            return (result == 0 ? 0 : -1);
+        }
+    }
+
+    return -1;
 }

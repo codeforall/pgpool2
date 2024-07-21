@@ -68,7 +68,6 @@ volatile sig_atomic_t backend_timer_expired = 0;	/* flag for connection
 													 * closed timer is expired */
 volatile sig_atomic_t health_check_timer_expired;	/* non 0 if health check
 													 * timer expired */
-static int	check_socket_status(int fd);
 static bool connect_with_timeout(int fd, struct addrinfo *walk, char *host, int port, bool retry);
 
 #define TMINTMAX 0x7fffffff
@@ -733,38 +732,6 @@ connect_inet_domain_socket_by_port(char *host, int port, bool retry)
 	}
 
 	freeaddrinfo(res);
-	return -1;
-}
-
-/* check_socket_status()
- * RETURN: 0 => OK
- *        -1 => broken socket.
- */
-static int
-check_socket_status(int fd)
-{
-	fd_set		rfds;
-	int			result;
-	struct timeval t;
-
-	for (;;)
-	{
-		FD_ZERO(&rfds);
-		FD_SET(fd, &rfds);
-
-		t.tv_sec = t.tv_usec = 0;
-
-		result = select(fd + 1, &rfds, NULL, NULL, &t);
-		if (result < 0 && errno == EINTR)
-		{
-			continue;
-		}
-		else
-		{
-			return (result == 0 ? 0 : -1);
-		}
-	}
-
 	return -1;
 }
 
