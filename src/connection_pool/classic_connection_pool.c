@@ -47,7 +47,7 @@ static bool copy_classic_cluster_sockets_pool(void);
 static void import_pooled_startup_packet_into_child(PooledBackendClusterConnection *backend_end_point);
 static ClassicConnectionPoolEntry *get_pool_entry_for_pool_id(int pool_id);
 
-static LEASE_TYPES pool_get_cp(char *user, char *database, int protoMajor, bool check_socket, ClassicConnectionPoolEntry *selected_pool);
+static LEASE_TYPES pool_get_cp(char *user, char *database, int protoMajor, bool check_socket, ClassicConnectionPoolEntry **selected_pool);
 static ClassicConnectionPoolEntry *get_pool_entry_to_discard(void);
 static void discard_cp(void);
 static void clear_pooled_cluster_connection(PooledBackendClusterConnection *backend_end_point);
@@ -88,9 +88,9 @@ LPBorrowClusterConnection(char *database, char *user, int major, int minor)
     LPBorrowConnectionRes *res = palloc(sizeof(LPBorrowConnectionRes));
     ClassicConnectionPoolEntry *selected_pool = NULL;
     Assert(firstChildConnectionPool);
-    res->lease_type = pool_get_cp(database, user, major, true, selected_pool);
+    res->lease_type = pool_get_cp(database, user, major, true, &selected_pool);
     /* set the pool_id*/
-    res->pool_id = selected_pool ? selected_pool->pool_id: -1;
+    res->pool_id = selected_pool ? selected_pool->pool_id : -1;
     res->selected_pool = selected_pool;
     return (BorrowConnectionRes*)res;
 }
@@ -253,7 +253,6 @@ load_pooled_connection_into_child(ClassicConnectionPoolEntry* selected_pool, LEA
     BackendClusterConnection *current_backend_con = GetBackendClusterConnection();
 
     Assert(selected_pool);
-
     backend_end_point = &selected_pool->endPoint;
 
     ereport(DEBUG2,
@@ -386,7 +385,7 @@ import_pooled_startup_packet_into_child(PooledBackendClusterConnection *backend_
  * find connection by user and database
  */
 static LEASE_TYPES
-pool_get_cp(char *user, char *database, int protoMajor, bool check_socket, ClassicConnectionPoolEntry *selected_pool)
+pool_get_cp(char *user, char *database, int protoMajor, bool check_socket, ClassicConnectionPoolEntry **selected_pool)
 {
     pool_sigset_t oldmask;
     int i;
@@ -401,11 +400,11 @@ pool_get_cp(char *user, char *database, int protoMajor, bool check_socket, Class
     for (i = 0; i < pool_config->max_pool; i++)
     {
         PooledBackendClusterConnection *endPoint = &connection_pool[i].endPoint;
-        selected_pool = &connection_pool[i];
+        *selected_pool = &connection_pool[i];
         if (connection_pool[i].status == POOL_ENTRY_EMPTY)
         {
             if (!first_empty_entry)
-                first_empty_entry = selected_pool;
+                first_empty_entry = &connection_pool[i];
             continue;
         }
         if (strcmp(endPoint->user, user) == 0 &&
@@ -468,17 +467,21 @@ pool_get_cp(char *user, char *database, int protoMajor, bool check_socket, Class
                     }
                 }
                 POOL_SETMASK(&oldmask);
+
                 return LEASE_TYPE_READY_TO_USE;
             }
     }
     POOL_SETMASK(&oldmask);
     if (first_empty_entry)
     {
-        selected_pool = first_empty_entry;
+        *selected_pool = first_empty_entry;
+        elog(DEBUG2, "pool_get_cp: empty slot reserved LEASE_TYPE_EMPTY_SLOT_RESERVED at id %d", first_empty_entry->pool_id);
         return LEASE_TYPE_EMPTY_SLOT_RESERVED;
     }
 
-    selected_pool = get_pool_entry_to_discard();
+    *selected_pool = get_pool_entry_to_discard();
+    elog(DEBUG2, "pool_get_cp: discard and create LEASE_TYPE_DISCART_AND_CREATE");
+
     return LEASE_TYPE_DISCART_AND_CREATE;
 }
 
