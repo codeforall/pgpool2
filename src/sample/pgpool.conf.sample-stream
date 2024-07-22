@@ -366,6 +366,11 @@ backend_clustering_mode = 'streaming_replication'
                                    # Semicolon separated list of queries
                                    # to be issued at the end of a session
                                    # The default is for 8.3 and later
+#connection_pool_type = 'classic'
+                                   # Type of connection pooling to use.
+                                   # Possible types are 'global' or 'classic'.
+                                   # (change requires restart)
+                            
 #reset_query_list = 'ABORT; DISCARD ALL'
                                    # The following one is for 8.2 and before
 #reset_query_list = 'ABORT; RESET ALL; SET SESSION AUTHORIZATION DEFAULT'

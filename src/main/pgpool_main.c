@@ -393,7 +393,11 @@ PgpoolMain(bool discard_status, bool clear_memcache_oidmaps)
 		close(syslogPipe[0]);
 	syslogPipe[0] = -1;
 
-	InstallConnectionPool(GetGlobalConnectionPool());
+	if (pool_config->connection_pool_type == GLOBAL_CONNECTION_POOL)
+		InstallConnectionPool(GetGlobalConnectionPool());
+	else
+		InstallConnectionPool(GetClassicConnectionPool());
+
 	initialize_shared_mem_objects(clear_memcache_oidmaps);
 
 	/*
@@ -544,8 +548,11 @@ PgpoolMain(bool discard_status, bool clear_memcache_oidmaps)
 	 */
 	POOL_SETMASK(&BlockSig);
 
-	ipc_endpoints = malloc(sizeof(IPC_Endpoint) * pool_config->num_init_children);
-	memset(ipc_endpoints, 0, sizeof(IPC_Endpoint) * pool_config->num_init_children);
+	if (pool_config->connection_pool_type == GLOBAL_CONNECTION_POOL)
+	{
+		ipc_endpoints = malloc(sizeof(IPC_Endpoint) * pool_config->num_init_children);
+		memset(ipc_endpoints, 0, sizeof(IPC_Endpoint) * pool_config->num_init_children);
+	}
 
 	if (pool_config->process_management == PM_DYNAMIC)
 	{
@@ -655,6 +662,7 @@ PgpoolMain(bool discard_status, bool clear_memcache_oidmaps)
 	/* This is the main loop */
 	for (;;)
 	{
+		bool process_service_child = false;
 		/* Check pending requests */
 		check_requests();
 		/*
@@ -663,12 +671,14 @@ PgpoolMain(bool discard_status, bool clear_memcache_oidmaps)
 		 */
 		if (first)
 		{
-			int			i;
-			int			n;
+			int		i,n;
+
 			POOL_NODE_STATUS *node_status = pool_get_node_status();
 
 			ereport(LOG,
-					(errmsg("%s successfully started. Global Connection Modified version %s (%s)", PACKAGE, VERSION, PGPOOLVERSION)));
+					(errmsg("%s successfully started. version %s (%s)", PACKAGE, VERSION, PGPOOLVERSION)));
+			ereport(LOG,
+					(errmsg("Configured connection pooling: %s", GetConnectionPoolInfo())));
 
 			/*
 			 * Very early stage node checking. It is assumed that
@@ -698,18 +708,27 @@ PgpoolMain(bool discard_status, bool clear_memcache_oidmaps)
 		first = false;
 
 		processState = SLEEPING;
-		if (handle_child_ipc_requests() == false)
+		if (pool_config->connection_pool_type == GLOBAL_CONNECTION_POOL)
 		{
-			/* If signal was received by handle child IPC than skip child serive */
-			if (pool_config->process_management == PM_DYNAMIC)
+			process_service_child = !handle_child_ipc_requests();
+		}
+		else
+		{
+			int r;
+			struct timeval t = {2, 0};
+			POOL_SETMASK(&UnBlockSig);
+			r = pool_pause(&t);
+			POOL_SETMASK(&BlockSig);
+			process_service_child = true;
+		}
+		if (process_service_child && pool_config->process_management == PM_DYNAMIC)
+		{
+			struct timeval current_time;
+			gettimeofday(&current_time, NULL);
+			if (current_time.tv_sec - last_child_service_time.tv_sec >= SERVICE_CHILD_RASTER_SECONDS)
 			{
-				struct timeval current_time;
-				gettimeofday(&current_time, NULL);
-				if (current_time.tv_sec - last_child_service_time.tv_sec >= SERVICE_CHILD_RASTER_SECONDS)
-				{
-					service_child_processes();
-					gettimeofday(&last_child_service_time, NULL);
-				}
+				service_child_processes();
+				gettimeofday(&last_child_service_time, NULL);
 			}
 		}
 	}
@@ -839,20 +858,24 @@ static pid_t
 fork_a_child(int *fds, int id)
 {
 	pid_t		pid;
-	int ipc_sock[2];
+	int ipc_sock[2] = {-1, -1};
+	if (pool_config->connection_pool_type == GLOBAL_CONNECTION_POOL)
+	{
 
-	if (socketpair(AF_UNIX, SOCK_STREAM, 0, ipc_sock) == -1) {
-		ereport(FATAL,
-			(errmsg("failed to IPC socket"),
-				 errdetail("system call socketpair() failed with reason: %m")));
+		if (socketpair(AF_UNIX, SOCK_STREAM, 0, ipc_sock) == -1) {
+			ereport(FATAL,
+				(errmsg("failed to IPC socket"),
+					errdetail("system call socketpair() failed with reason: %m")));
+		}
+	}
 
-    }
 	pid = fork();
 
 	if (pid == 0)
 	{
 		on_exit_reset();
-		close(ipc_sock[1]);
+		if (pool_config->connection_pool_type == GLOBAL_CONNECTION_POOL)
+			close(ipc_sock[1]);
 
 		/*
 		 * Before we unconditionally closed pipe_fds[0] and pipe_fds[1] here,
@@ -886,11 +909,14 @@ fork_a_child(int *fds, int id)
 	}
 	else
 	{
-		close(ipc_sock[0]);
-		socket_set_nonblock(ipc_sock[1]);
-		ipc_endpoints[id].child_link = ipc_sock[1];
-		ipc_endpoints[id].child_pid = pid;
-		ipc_endpoints[id].proc_info_id = id;
+		if (pool_config->connection_pool_type == GLOBAL_CONNECTION_POOL)
+		{
+			close(ipc_sock[0]);
+			socket_set_nonblock(ipc_sock[1]);
+			ipc_endpoints[id].child_link = ipc_sock[1];
+			ipc_endpoints[id].child_pid = pid;
+			ipc_endpoints[id].proc_info_id = id;
+		}
 	}
 	return pid;
 }
@@ -2020,11 +2046,14 @@ reaper(void)
 				if (pid == process_info[i].pid)
 				{
 					found = true;
-					/* Close the ipc endpoint for the exited child */
-					close(ipc_endpoints[i].child_link);
-					ipc_endpoints[i].child_link = -1;
-					ipc_endpoints[i].child_pid = 0;
-					ipc_endpoints[i].proc_info_id = -1;
+					if (pool_config->connection_pool_type == GLOBAL_CONNECTION_POOL)
+					{
+						/* Close the ipc endpoint for the exited child */
+						close(ipc_endpoints[i].child_link);
+						ipc_endpoints[i].child_link = -1;
+						ipc_endpoints[i].child_pid = 0;
+						ipc_endpoints[i].proc_info_id = -1;
+					}
 					/* fork a new child */
 					if (!switching && !exiting && restart_child &&
 						pool_config->process_management != PM_DYNAMIC)
@@ -3880,14 +3909,16 @@ sync_backend_from_watchdog(void)
 			{
 				if (process_info[i].pid)
 				{
-					/* Close the ipc endpoint for the exiting child */
-					close(ipc_endpoints[i].child_link);
+					if (pool_config->connection_pool_type == GLOBAL_CONNECTION_POOL)
+					{
+						/* Close the ipc endpoint for the exiting child */
+						close(ipc_endpoints[i].child_link);
+						ipc_endpoints[i].child_link = -1;
+						ipc_endpoints[i].child_pid = 0;
+						ipc_endpoints[i].proc_info_id = -1;
+					}
 
 					kill(process_info[i].pid, SIGQUIT);
-					ipc_endpoints[i].child_link = -1;
-					ipc_endpoints[i].child_pid = 0;
-					ipc_endpoints[i].proc_info_id = -1;
-
 
 					process_info[i].pid = fork_a_child(fds, i);
 					process_info[i].start_time = time(NULL);
@@ -4793,13 +4824,15 @@ exec_child_restart(FAILOVER_CONTEXT *failover_context, int node_id)
 			{
 				if (process_info[i].pid)
 				{
-					/* Close the ipc endpoint for the exiting child */
-					close(ipc_endpoints[i].child_link);
-
+					if (pool_config->connection_pool_type == GLOBAL_CONNECTION_POOL)
+					{
+						/* Close the ipc endpoint for the exiting child */
+						close(ipc_endpoints[i].child_link);
+						ipc_endpoints[i].child_link = -1;
+						ipc_endpoints[i].child_pid = 0;
+						ipc_endpoints[i].proc_info_id = -1;
+					}
 					kill(process_info[i].pid, SIGQUIT);
-					ipc_endpoints[i].child_link = -1;
-					ipc_endpoints[i].child_pid = 0;
-					ipc_endpoints[i].proc_info_id = -1;
 
 					process_info[i].pid = fork_a_child(fds, i);
 					process_info[i].start_time = time(NULL);
@@ -5264,6 +5297,9 @@ handle_child_ipc_requests(void)
 	struct timeval tv;
 	fd_set	rmask;
 	bool	ret = false;
+
+	if (pool_config->connection_pool_type != GLOBAL_CONNECTION_POOL)
+		return true;
 
 	POOL_SETMASK(&UnBlockSig);
 

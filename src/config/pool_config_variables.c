@@ -299,6 +299,12 @@ static const struct config_enum_entry relcache_query_target_options[] = {
 	{NULL, 0, false}
 };
 
+static const struct config_enum_entry connection_pool_type_options[] = {
+	{"global", GLOBAL_CONNECTION_POOL, false},
+	{"classic", CLASSIC_CONNECTION_POOL, false},
+	{NULL, 0, false}
+};
+
 static const struct config_enum_entry check_temp_table_options[] = {
 	{"catalog", CHECK_TEMP_CATALOG, false},	/* search system catalogs */
 	{"trace", CHECK_TEMP_TRACE, false},		/* tracing temp tables */
@@ -2462,6 +2468,17 @@ static struct config_enum ConfigureNamesEnum[] =
 		(int *) &g_pool_config.relcache_query_target,
 		RELQTARGET_PRIMARY,
 		relcache_query_target_options,
+		NULL, NULL, NULL, NULL
+	},
+
+	{
+		{"connection_pool_type", CFGCXT_INIT, CONNECTION_POOL_CONFIG,
+			"connection pooling type.",
+			CONFIG_VAR_TYPE_ENUM, false, 0
+		},
+		(int *) &g_pool_config.connection_pool_type,
+		CLASSIC_CONNECTION_POOL,
+		connection_pool_type_options,
 		NULL, NULL, NULL, NULL
 	},
 

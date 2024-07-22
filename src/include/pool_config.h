@@ -132,6 +132,12 @@ typedef enum CHECK_TEMP_TABLE_OPTION
 	CHECK_TEMP_OFF,
 }			CHECK_TEMP_TABLE_OPTION;
 
+typedef enum CONNECTION_POOL_TYPE_OPTION
+{
+	GLOBAL_CONNECTION_POOL = 1,
+	CLASSIC_CONNECTION_POOL
+} CONNECTION_POOL_TYPE_OPTION;
+
 /*
  * Flags for backendN_flag
  */
@@ -452,6 +458,7 @@ typedef struct
 	bool		check_unlogged_table;	/* enable unlogged table check */
 	bool		enable_shared_relcache;	/* If true, relation cache stored in memory cache */
 	RELQTARGET_OPTION	relcache_query_target;	/* target node to send relcache queries */
+	CONNECTION_POOL_TYPE_OPTION connection_pool_type;	/* connection pool type */
 
 	/*
 	 * followings are for regex support and do not exist in the configuration

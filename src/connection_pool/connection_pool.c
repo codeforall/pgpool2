@@ -26,6 +26,15 @@ ConnectionPoolRequiredSharedMemSize(void)
     return 0;
 }
 
+const char*
+GetConnectionPoolInfo(void)
+{
+    if (! activeConnectionPool)
+        return "No connection pool installed";
+    Assert(activeConnectionPool->GetConnectionPoolInfo)
+    return activeConnectionPool->GetConnectionPoolInfo();
+}
+
 void
 InitializeConnectionPool(void *shared_mem_ptr)
 {

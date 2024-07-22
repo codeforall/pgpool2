@@ -49,11 +49,13 @@ typedef struct ConnectionPoolRoutine
     PooledBackendNodeConnection *(*GetBackendNodeConnectionForBackendPID)(int backend_pid, int *backend_node_id);
     PooledBackendClusterConnection* (*GetBackendEndPointForCancelPacket) (CancelPacket *cp);
     bool (*ClusterConnectionNeedPush)(void);
+    const char *(*GetConnectionPoolInfo)(void);
 } ConnectionPoolRoutine;
 
 extern void InstallConnectionPool(const ConnectionPoolRoutine *ConnectionPoolRoutine);
 
 extern size_t ConnectionPoolRequiredSharedMemSize(void);
+extern const char *GetConnectionPoolInfo(void);
 extern void InitializeConnectionPool(void *shared_mem_ptr);
 extern void LoadChildConnectionPool(int intarg);
 extern BorrowConnectionRes *BorrowClusterConnection(char *database, char *user, int major, int minor);

@@ -40,6 +40,12 @@ static size_t
     return sizeof(ConnectionPoolEntry) * pool_config->max_pool_size;
 }
 
+static const char*
+GPGetConnectionPoolInfo(void)
+{
+    return "Global Connection Pool";
+}
+
 static void
 GPInitializeConnectionPool(void *shared_mem_ptr)
 {
@@ -188,7 +194,8 @@ ConnectionPoolRoutine GlobalConnectionPoolRoutine = {
     .GetBackendNodeConnectionForBackendPID = GPGetBackendNodeConnectionForBackendPID,
     .ReleaseChildConnectionPool = GPReleaseChildConnectionPool,
     .ClusterConnectionNeedPush = GPClusterConnectionNeedPush,
-    .GetBackendEndPointForCancelPacket = GPGetBackendEndPointForCancelPacket
+    .GetBackendEndPointForCancelPacket = GPGetBackendEndPointForCancelPacket,
+    .GetConnectionPoolInfo = GPGetConnectionPoolInfo
 };
 
 const ConnectionPoolRoutine*

@@ -56,7 +56,11 @@ static int classic_connection_pool_entry_count(void)
 {
     return pool_config->max_pool_size * pool_config->num_init_children;
 }
-
+static const char *
+LPGetConnectionPoolInfo(void)
+{
+    return "Classic Connection Pool";
+}
 static size_t
 LPRequiredSharedMemSize(void)
 {
@@ -225,7 +229,9 @@ ConnectionPoolRoutine ClassicConnectionPoolRoutine = {
     .GetBackendNodeConnectionForBackendPID = LPGetBackendNodeConnectionForBackendPID,
     .ReleaseChildConnectionPool = LPReleaseChildConnectionPool,
     .ClusterConnectionNeedPush = LPClusterConnectionNeedPush,
-    .GetBackendEndPointForCancelPacket = LPGetBackendEndPointForCancelPacket};
+    .GetBackendEndPointForCancelPacket = LPGetBackendEndPointForCancelPacket,
+    .GetConnectionPoolInfo = LPGetConnectionPoolInfo
+    };
 
 const ConnectionPoolRoutine *
 GetClassicConnectionPool(void)
