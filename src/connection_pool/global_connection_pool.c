@@ -20,7 +20,8 @@ typedef struct GPBorrowConnectionRes
     int sock_count;
 } GPBorrowConnectionRes;
 
-ConnectionPoolEntry *ConnectionPool = NULL; /* Global connection pool */
+extern ConnectionPoolEntry *ConnectionPool;
+
 int ParentLinkFd = -1;
 
 static bool import_pooled_connection_into_child(int pool_id, int *sockets, LEASE_TYPES lease_type);
@@ -46,6 +47,12 @@ GPGetConnectionPoolInfo(void)
     return "Global Connection Pool";
 }
 
+static int
+GPGetPoolEntriesCount(void)
+{
+    return pool_config->max_pool_size;
+}
+
 static void
 GPInitializeConnectionPool(void *shared_mem_ptr)
 {
@@ -56,7 +63,7 @@ GPInitializeConnectionPool(void *shared_mem_ptr)
     for (i = 0; i < pool_config->max_pool_size; i++)
     {
         ConnectionPool[i].pool_id = i;
-        ConnectionPool[i].borrower_proc_info_id = -1;
+        ConnectionPool[i].child_id = -1;
     }
 }
 
@@ -104,35 +111,6 @@ GPReleaseClusterConnection(bool discard)
     return ReleasePooledConnectionFromChild(ParentLinkFd, discard);
 }
 
-/*
- * locate and return the shared memory BackendConnection having the
- * backend connection with the pid
- * If the connection is found the *backend_node_id contains the backend node id
- * of the backend node that has the connection
- */
-static PooledBackendNodeConnection *
-GPGetBackendNodeConnectionForBackendPID(int backend_pid, int *backend_node_id)
-{
-    int i;
-
-    for (i = 0; i < pool_config->max_pool_size; i++)
-    {
-        int con_slot;
-        if (ConnectionPool[i].status == POOL_ENTRY_EMPTY ||
-            ConnectionPool[i].endPoint.num_sockets <= 0)
-            continue;
-        for (con_slot = 0; con_slot < ConnectionPool[i].endPoint.num_sockets; con_slot++)
-        {
-            if (ConnectionPool[i].endPoint.conn_slots[con_slot].pid == backend_pid)
-            {
-                *backend_node_id = i;
-                return &ConnectionPool[i].endPoint.conn_slots[con_slot];
-            }
-        }
-    }
-    return NULL;
-}
-
 static bool
 GPClusterConnectionNeedPush(void)
 {
@@ -145,36 +123,6 @@ GPClusterConnectionNeedPush(void)
     return true;
 }
 
-static PooledBackendClusterConnection*
-GPGetBackendEndPointForCancelPacket(CancelPacket *cp)
-{
-    int i;
-    for (i = 0; i < pool_config->max_pool_size; i++)
-    {
-        int con_slot;
-        if (ConnectionPool[i].status == POOL_ENTRY_EMPTY ||
-            ConnectionPool[i].endPoint.num_sockets <= 0)
-            continue;
-
-        for (con_slot = 0; con_slot < ConnectionPool[i].endPoint.num_sockets; con_slot++)
-        {
-            PooledBackendNodeConnection *c = &ConnectionPool[i].endPoint.conn_slots[con_slot];
-            ereport(DEBUG2,
-                (errmsg("processing cancel request"),
-                    errdetail("connection info: database:%s user:%s pid:%d key:%d i:%d",
-                            ConnectionPool[i].endPoint.database, ConnectionPool[i].endPoint.user,
-                                ntohl(c->pid), ntohl(c->key), con_slot)));
-            if (c->pid == cp->pid && c->key == cp->key)
-            {
-                ereport(DEBUG1,
-                    (errmsg("processing cancel request"),
-                        errdetail("found pid:%d key:%d i:%d", ntohl(c->pid), ntohl(c->key), con_slot)));
-                        return &ConnectionPool[i].endPoint;
-            }
-        }
-    }
-    return NULL;
-}
 
 
 static void
@@ -191,11 +139,10 @@ ConnectionPoolRoutine GlobalConnectionPoolRoutine = {
     .ReleaseClusterConnection = GPReleaseClusterConnection,
     .SyncClusterConnectionDataInPool = GPSyncClusterConnectionDataInPool,
     .PushClusterConnectionToPool = GPPushClusterConnectionToPool,
-    .GetBackendNodeConnectionForBackendPID = GPGetBackendNodeConnectionForBackendPID,
     .ReleaseChildConnectionPool = GPReleaseChildConnectionPool,
     .ClusterConnectionNeedPush = GPClusterConnectionNeedPush,
-    .GetBackendEndPointForCancelPacket = GPGetBackendEndPointForCancelPacket,
-    .GetConnectionPoolInfo = GPGetConnectionPoolInfo
+    .GetConnectionPoolInfo = GPGetConnectionPoolInfo,
+    .GetPoolEntriesCount = GPGetPoolEntriesCount
 };
 
 const ConnectionPoolRoutine*
@@ -488,14 +435,14 @@ GlobalPoolReleasePooledConnection(ConnectionPoolEntry *pool_entry, IPC_Endpoint 
 
     pro_info = pool_get_process_info_from_IPC_Endpoint(ipc_endpoint);
 
-    if (pool_entry->borrower_pid != ipc_endpoint->child_pid)
+    if (pool_entry->child_pid != ipc_endpoint->child_pid)
     {
         ereport(WARNING,
                 (errmsg("child:%d leased:%d is not the borrower of pool_id:%d borrowed by:%d",
                         ipc_endpoint->child_pid,
                         pro_info->pool_id,
                         pool_entry->pool_id,
-                        pool_entry->borrower_pid)));
+                        pool_entry->child_pid)));
         return false;
     }
     if (discard)
@@ -608,7 +555,7 @@ get_pooled_connection_for_lending(char *user, char *database, int protoMajor, LE
                         ConnectionPool[i].endPoint.user)));
 
         if (ConnectionPool[i].status == POOL_ENTRY_CONNECTED &&
-            ConnectionPool[i].borrower_pid <= 0 &&
+            ConnectionPool[i].child_pid <= 0 &&
             ConnectionPool[i].endPoint.sp.major == protoMajor)
         {
             if (strcmp(ConnectionPool[i].endPoint.user, user) == 0 &&
@@ -621,13 +568,13 @@ get_pooled_connection_for_lending(char *user, char *database, int protoMajor, LE
                 return i;
             }
         }
-        else if (free_pool_slot == -1 && ConnectionPool[i].status == POOL_ENTRY_EMPTY && ConnectionPool[i].borrower_pid <= 0)
+        else if (free_pool_slot == -1 && ConnectionPool[i].status == POOL_ENTRY_EMPTY && ConnectionPool[i].child_pid <= 0)
             free_pool_slot = i;
-        /* Alos try calculating the victum in case we failed to find even a free connection */
+        /* Also try calculating the victum in case we failed to find even a free connection */
         if (free_pool_slot == -1 && found_good_victum == false)
         {
             if (ConnectionPool[i].status == POOL_ENTRY_CONNECTED &&
-                ConnectionPool[i].borrower_pid <= 0)
+                ConnectionPool[i].child_pid <= 0)
             {
                 if (ConnectionPool[i].need_cleanup)
                 {
@@ -687,20 +634,20 @@ unregister_lease(int pool_id, IPC_Endpoint *ipc_endpoint)
                 (errmsg("pool_id:%d is out of range", pool_id)));
         return false;
     }
-    if (ConnectionPool[pool_id].borrower_pid > 0 && ConnectionPool[pool_id].borrower_pid != ipc_endpoint->child_pid)
+    if (ConnectionPool[pool_id].child_pid > 0 && ConnectionPool[pool_id].child_pid != ipc_endpoint->child_pid)
     {
         ereport(ERROR,
-                (errmsg("pool_id:%d is leased to different child:%d", pool_id, ConnectionPool[pool_id].borrower_pid)));
+                (errmsg("pool_id:%d is leased to different child:%d", pool_id, ConnectionPool[pool_id].child_pid)));
         return false;
     }
     child_proc_info = &process_info[ipc_endpoint->proc_info_id];
     child_proc_info->pool_id = -1;
 
     ereport(DEBUG1,
-            (errmsg("pool_id:%d, is released from child:%d", pool_id, ConnectionPool[pool_id].borrower_pid)));
+            (errmsg("pool_id:%d, is released from child:%d", pool_id, ConnectionPool[pool_id].child_pid)));
 
-    ConnectionPool[pool_id].borrower_pid = -1;
-    ConnectionPool[pool_id].borrower_proc_info_id = -1;
+    ConnectionPool[pool_id].child_pid = -1;
+    ConnectionPool[pool_id].child_id = -1;
     ConnectionPool[pool_id].endPoint.client_disconnection_time = time(NULL);
     ConnectionPool[pool_id].endPoint.client_disconnection_count++;
 
@@ -724,15 +671,15 @@ register_new_lease(int pool_id, LEASE_TYPES lease_type, IPC_Endpoint *ipc_endpoi
                 (errmsg("pool_id:%d is out of range", pool_id)));
         return false;
     }
-    if (ConnectionPool[pool_id].borrower_pid > 0 && ConnectionPool[pool_id].borrower_pid != ipc_endpoint->child_pid)
+    if (ConnectionPool[pool_id].child_pid > 0 && ConnectionPool[pool_id].child_pid != ipc_endpoint->child_pid)
     {
         ereport(ERROR,
-                (errmsg("pool_id:%d is already leased to child:%d", pool_id, ConnectionPool[pool_id].borrower_pid)));
+                (errmsg("pool_id:%d is already leased to child:%d", pool_id, ConnectionPool[pool_id].child_pid)));
         return false;
     }
 
-    ConnectionPool[pool_id].borrower_pid = ipc_endpoint->child_pid;
-    ConnectionPool[pool_id].borrower_proc_info_id = ipc_endpoint->proc_info_id;
+    ConnectionPool[pool_id].child_pid = ipc_endpoint->child_pid;
+    ConnectionPool[pool_id].child_id = ipc_endpoint->proc_info_id;
     child_proc_info = &process_info[ipc_endpoint->proc_info_id];
     child_proc_info->pool_id = pool_id;
     if (ConnectionPool[pool_id].status == POOL_ENTRY_CONNECTED)
@@ -741,6 +688,6 @@ register_new_lease(int pool_id, LEASE_TYPES lease_type, IPC_Endpoint *ipc_endpoi
         ConnectionPool[pool_id].leased_time = time(NULL);
     }
     ereport(LOG,
-            (errmsg("pool_id:%d, leased to child:%d", pool_id, ConnectionPool[pool_id].borrower_pid)));
+            (errmsg("pool_id:%d, leased to child:%d", pool_id, ConnectionPool[pool_id].child_pid)));
     return true;
 }

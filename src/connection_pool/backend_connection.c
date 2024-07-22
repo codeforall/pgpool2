@@ -1,6 +1,7 @@
 #include "connection_pool/backend_connection.h"
 #include "connection_pool/connection_pool.h"
 #include "protocol/pool_connection_pool.h"
+#include "protocol/pool_process_query.h"
 
 #include "context/pool_process_context.h"
 #include "main/pool_internal_comms.h"
@@ -98,7 +99,7 @@ bool ClearChildPooledConnectionData(void)
  * If the connection is borrowed from the global pool
  * clean it up too
  */
-bool DiscardBackendConnection(bool release_pool)
+bool DiscardCurrentBackendConnection(bool release_pool)
 {
     BackendClusterConnection *current_backend_con;
     int i, pool_id;
@@ -115,6 +116,8 @@ bool DiscardBackendConnection(bool release_pool)
 
     // if (release_pool && pool_id >= 0 && pool_id < pool_config->max_pool_size)
     //     ReleasePooledConnectionFromChild(parent_link, true);
+
+    pool_send_frontend_exits(current_backend_con);
 
     for (i = 0; i < NUM_BACKENDS; i++)
     {

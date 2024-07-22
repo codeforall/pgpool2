@@ -16,39 +16,24 @@
 
 #define TMINTMAX 0x7fffffff
 
-typedef struct ClassicConnectionPoolEntry
-{
-    PooledBackendClusterConnection endPoint;
-    POOL_ENTRY_STATUS status;
-    int pool_id;
-    int child_id;
-    int classic_pool_id;
-    pid_t borrower_pid;
-    int borrower_proc_info_id;
-    bool need_cleanup;
-    time_t leased_time;
-    time_t close_time;
-    int leased_count;
-} ClassicConnectionPoolEntry;
-
 typedef struct LPBorrowConnectionRes
 {
     LEASE_TYPES lease_type;
     int pool_id;
-    ClassicConnectionPoolEntry* selected_pool;
+    ConnectionPoolEntry *selected_pool;
 } LPBorrowConnectionRes;
 
-ClassicConnectionPoolEntry *ClassicConnectionPool = NULL; /* Classic connection pool still resides in shared memory */
-ClassicConnectionPoolEntry *firstChildConnectionPool = NULL;
+extern ConnectionPoolEntry *ConnectionPool;
+ConnectionPoolEntry *firstChildConnectionPool = NULL;
 
-static bool load_pooled_connection_into_child(ClassicConnectionPoolEntry *selected_pool, LEASE_TYPES lease_type);
+static bool load_pooled_connection_into_child(ConnectionPoolEntry *selected_pool, LEASE_TYPES lease_type);
 static bool export_classic_cluster_connection_data_to_pool(void);
 static bool copy_classic_cluster_sockets_pool(void);
 static void import_pooled_startup_packet_into_child(PooledBackendClusterConnection *backend_end_point);
-static ClassicConnectionPoolEntry *get_pool_entry_for_pool_id(int pool_id);
+static ConnectionPoolEntry *get_pool_entry_for_pool_id(int pool_id);
 
-static LEASE_TYPES pool_get_cp(char *user, char *database, int protoMajor, bool check_socket, ClassicConnectionPoolEntry **selected_pool);
-static ClassicConnectionPoolEntry *get_pool_entry_to_discard(void);
+static LEASE_TYPES pool_get_cp(char *user, char *database, int protoMajor, bool check_socket, ConnectionPoolEntry **selected_pool);
+static ConnectionPoolEntry *get_pool_entry_to_discard(void);
 static void discard_cp(void);
 static void clear_pooled_cluster_connection(PooledBackendClusterConnection *backend_end_point);
 
@@ -64,20 +49,29 @@ LPGetConnectionPoolInfo(void)
 static size_t
 LPRequiredSharedMemSize(void)
 {
-    return sizeof(ClassicConnectionPoolEntry) * classic_connection_pool_entry_count();
+    return sizeof(ConnectionPoolEntry) * classic_connection_pool_entry_count();
+}
+
+static int
+LPGetPoolEntriesCount(void)
+{
+    return classic_connection_pool_entry_count();
 }
 
 static void
 LPInitializeConnectionPool(void *shared_mem_ptr)
 {
     int i;
-    ClassicConnectionPool = (ClassicConnectionPoolEntry *)shared_mem_ptr;
-    memset(ClassicConnectionPool, 0, LPRequiredSharedMemSize());
+    Assert(ProcessType == PT_MAIN);
+    ConnectionPool = (ConnectionPoolEntry *)shared_mem_ptr;
+    memset(ConnectionPool, 0, LPRequiredSharedMemSize());
 
     for (i = 0; i < classic_connection_pool_entry_count(); i++)
     {
-        ClassicConnectionPool[i].pool_id = i;
-        ClassicConnectionPool[i].borrower_proc_info_id = -1;
+        ConnectionPool[i].pool_id = i;
+        ConnectionPool[i].child_id = -1;
+        ConnectionPool[i].status = POOL_ENTRY_EMPTY;
+        ConnectionPool[i].child_pid = -1;
     }
 }
 
@@ -90,7 +84,7 @@ static BorrowConnectionRes *
 LPBorrowClusterConnection(char *database, char *user, int major, int minor)
 {
     LPBorrowConnectionRes *res = palloc(sizeof(LPBorrowConnectionRes));
-    ClassicConnectionPoolEntry *selected_pool = NULL;
+    ConnectionPoolEntry *selected_pool = NULL;
     Assert(firstChildConnectionPool);
     res->lease_type = pool_get_cp(database, user, major, true, &selected_pool);
     /* set the pool_id*/
@@ -100,16 +94,19 @@ LPBorrowClusterConnection(char *database, char *user, int major, int minor)
 }
 
 static void
-LPLoadChildConnectionPool(int child_id)
+LPLoadChildConnectionPool(int int_arg)
 {
     int i;
+    int child_id = my_proc_id;
     Assert(child_id < pool_config->num_init_children);
-    firstChildConnectionPool = &ClassicConnectionPool[child_id * pool_config->max_pool_size];
+    firstChildConnectionPool = &ConnectionPool[child_id * pool_config->max_pool_size];
+    elog(DEBUG2, "LoadChildConnectionPool: child_id:%d first id=%d", child_id, firstChildConnectionPool->pool_id);
     for (i = 0; i < pool_config->max_pool_size; i++)
     {
         firstChildConnectionPool[i].status = POOL_ENTRY_EMPTY;
         firstChildConnectionPool[i].child_id = child_id;
-        firstChildConnectionPool[i].classic_pool_id = i;
+        firstChildConnectionPool[i].pool_id = i;
+        firstChildConnectionPool[i].child_pid = getpid();
     }
 }
 
@@ -129,87 +126,61 @@ LPSyncClusterConnectionDataInPool(void)
 static bool
 LPPushClusterConnectionToPool(void)
 {
-    return true;
     return copy_classic_cluster_sockets_pool();
 }
 
 static bool
 LPReleaseClusterConnection(bool discard)
 {
-    if (discard)
-        discard_cp();
-    return true;
-}
+    BackendClusterConnection *current_backend_con;
+    ConnectionPoolEntry *pool_entry;
 
-/*
- * locate and return the shared memory BackendConnection having the
- * backend connection with the pid
- * If the connection is found the *backend_node_id contains the backend node id
- * of the backend node that has the connection
- */
-static PooledBackendNodeConnection *
-LPGetBackendNodeConnectionForBackendPID(int backend_pid, int *backend_node_id)
-{
-    int i;
-    for (i = 0; i < classic_connection_pool_entry_count(); i++)
+    Assert(processType == PT_CHILD);
+
+    current_backend_con = GetBackendClusterConnection();
+    pool_entry = get_pool_entry_for_pool_id(current_backend_con->pool_id);
+
+    if (!pool_entry)
+        return false;
+
+    // if (pool_entry->child_pid != my_proc_id)
+    // {
+    //     ereport(WARNING,
+    //             (errmsg("child:%d leased:%d is not the borrower of pool_id:%d borrowed by:%d",
+    //                     ipc_endpoint->child_pid,
+    //                     pro_info->pool_id,
+    //                     pool_entry->pool_id,
+    //                     pool_entry->child_pid)));
+    //     return false;
+    // }
+    if (discard)
     {
-        int con_slot;
-        if (ClassicConnectionPool[i].status == POOL_ENTRY_EMPTY ||
-            ClassicConnectionPool[i].endPoint.num_sockets <= 0)
-            continue;
-        for (con_slot = 0; con_slot < ClassicConnectionPool[i].endPoint.num_sockets; con_slot++)
-        {
-            if (ClassicConnectionPool[i].endPoint.conn_slots[con_slot].pid == backend_pid)
-            {
-                *backend_node_id = i;
-                return &ClassicConnectionPool[i].endPoint.conn_slots[con_slot];
-            }
-        }
+        pool_entry->status = POOL_ENTRY_EMPTY;
+        memset(&pool_entry->endPoint, 0, sizeof(PooledBackendClusterConnection));
     }
-    return NULL;
+
+    pool_entry->endPoint.client_disconnection_time = time(NULL);
+    pool_entry->endPoint.client_disconnection_count++;
+    pool_entry->last_returned_time = time(NULL);
+
+    ereport(LOG,
+            (errmsg("child: released pool_id:%d database:%s used:%s",
+                    pool_entry->pool_id,
+                    pool_entry->endPoint.database,
+                    pool_entry->endPoint.user)));
+    return true;
 }
 
 static bool
 LPClusterConnectionNeedPush(void)
 {
     BackendClusterConnection *child_connection = GetBackendClusterConnection();
-    ClassicConnectionPoolEntry *pool_entry = get_pool_entry_for_pool_id(child_connection->pool_id);
+    ConnectionPoolEntry *pool_entry = get_pool_entry_for_pool_id(child_connection->pool_id);
     if (!pool_entry)
         return false;
     if (pool_entry->status == POOL_ENTRY_CONNECTED && child_connection->lease_type == LEASE_TYPE_READY_TO_USE)
         return false;
     return true;
-}
-
-static PooledBackendClusterConnection *
-LPGetBackendEndPointForCancelPacket(CancelPacket *cp)
-{
-    int i;
-    for (i = 0; i < classic_connection_pool_entry_count(); i++)
-    {
-        int con_slot;
-        if (ClassicConnectionPool[i].status == POOL_ENTRY_EMPTY ||
-            ClassicConnectionPool[i].endPoint.num_sockets <= 0)
-            continue;
-
-        for (con_slot = 0; con_slot < ClassicConnectionPool[i].endPoint.num_sockets; con_slot++)
-        {
-            PooledBackendNodeConnection *c = &ClassicConnectionPool[i].endPoint.conn_slots[con_slot];
-            ereport(DEBUG2,
-                    (errmsg("processing cancel request"),
-                     errdetail("connection info: database:%s user:%s pid:%d key:%d i:%d",
-                               ClassicConnectionPool[i].endPoint.database, ClassicConnectionPool[i].endPoint.user,
-                               ntohl(c->pid), ntohl(c->key), con_slot)));
-            if (c->pid == cp->pid && c->key == cp->key)
-            {
-                ereport(DEBUG1,
-                        (errmsg("processing cancel request"),
-                         errdetail("found pid:%d key:%d i:%d", ntohl(c->pid), ntohl(c->key), con_slot)));
-                return &ClassicConnectionPool[i].endPoint;
-            }
-        }
-    }
-    return NULL;
 }
 
 static void
@@ -226,11 +197,10 @@ ConnectionPoolRoutine ClassicConnectionPoolRoutine = {
     .ReleaseClusterConnection = LPReleaseClusterConnection,
     .SyncClusterConnectionDataInPool = LPSyncClusterConnectionDataInPool,
     .PushClusterConnectionToPool = LPPushClusterConnectionToPool,
-    .GetBackendNodeConnectionForBackendPID = LPGetBackendNodeConnectionForBackendPID,
     .ReleaseChildConnectionPool = LPReleaseChildConnectionPool,
     .ClusterConnectionNeedPush = LPClusterConnectionNeedPush,
-    .GetBackendEndPointForCancelPacket = LPGetBackendEndPointForCancelPacket,
-    .GetConnectionPoolInfo = LPGetConnectionPoolInfo
+    .GetConnectionPoolInfo = LPGetConnectionPoolInfo,
+    .GetPoolEntriesCount = LPGetPoolEntriesCount
     };
 
 const ConnectionPoolRoutine *
@@ -239,19 +209,19 @@ GetClassicConnectionPool(void)
     return &ClassicConnectionPoolRoutine;
 }
 
-static ClassicConnectionPoolEntry *
+static ConnectionPoolEntry *
 get_pool_entry_for_pool_id(int pool_id)
 {
     if (pool_id < 0 || pool_id >= pool_config->max_pool_size)
         return NULL;
-    return &ClassicConnectionPool[pool_id];
+    return &firstChildConnectionPool[pool_id];
 }
 
 /*
  * We should already have the sockets imported from the global pool
  */
 static bool
-load_pooled_connection_into_child(ClassicConnectionPoolEntry* selected_pool, LEASE_TYPES lease_type)
+load_pooled_connection_into_child(ConnectionPoolEntry *selected_pool, LEASE_TYPES lease_type)
 {
     int i;
     int *backend_ids;
@@ -298,6 +268,7 @@ copy_classic_cluster_sockets_pool(void)
     int i;
     BackendClusterConnection *current_backend_con = GetBackendClusterConnection();
     PooledBackendClusterConnection *backend_end_point = current_backend_con->backend_end_point;
+    int pool_id = current_backend_con->pool_id;
 
     Assert(backend_end_point);
 
@@ -310,6 +281,8 @@ copy_classic_cluster_sockets_pool(void)
         else
             backend_end_point->conn_slots[i].socket = current_backend_con->slots[i].con->fd;
     }
+
+    get_pool_entry_for_pool_id(pool_id)->status = POOL_ENTRY_CONNECTED;
     return true;
 }
 
@@ -391,12 +364,12 @@ import_pooled_startup_packet_into_child(PooledBackendClusterConnection *backend_
  * find connection by user and database
  */
 static LEASE_TYPES
-pool_get_cp(char *user, char *database, int protoMajor, bool check_socket, ClassicConnectionPoolEntry **selected_pool)
+pool_get_cp(char *user, char *database, int protoMajor, bool check_socket, ConnectionPoolEntry **selected_pool)
 {
     pool_sigset_t oldmask;
     int i;
-    ClassicConnectionPoolEntry *first_empty_entry = NULL;
-    ClassicConnectionPoolEntry *connection_pool = firstChildConnectionPool;
+    ConnectionPoolEntry *first_empty_entry = NULL;
+    ConnectionPoolEntry *connection_pool = firstChildConnectionPool;
 
     Assert(processType == PT_CHILD);
     Assert(connection_pool)
@@ -494,13 +467,13 @@ pool_get_cp(char *user, char *database, int protoMajor, bool check_socket, Class
 /*
  * create a connection pool by user and database
  */
-static ClassicConnectionPoolEntry *
+static ConnectionPoolEntry *
 get_pool_entry_to_discard(void)
 {
     int i;
     time_t closetime;
-    ClassicConnectionPoolEntry *oldestp;
-    ClassicConnectionPoolEntry *connection_pool = firstChildConnectionPool;
+    ConnectionPoolEntry *oldestp;
+    ConnectionPoolEntry *connection_pool = firstChildConnectionPool;
 
     Assert(processType == PT_CHILD);
     Assert(connection_pool)
@@ -522,9 +495,9 @@ get_pool_entry_to_discard(void)
         //                    CONNECTION_SLOT(p, main_node_id)->sp->database,
         //                    CONNECTION_SLOT(p, main_node_id)->closetime)));
 
-        if (connection_pool[i].close_time < closetime)
+        if (connection_pool[i].last_returned_time < closetime)
         {
-            closetime = connection_pool[i].close_time;
+            closetime = connection_pool[i].last_returned_time;
             oldestp = &connection_pool[i];
         }
     }

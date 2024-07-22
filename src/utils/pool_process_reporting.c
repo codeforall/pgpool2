@@ -1707,8 +1707,8 @@ get_pools(int *nrows)
 		ProcessInfo *pi = NULL;
 
 		ConnectionPoolEntry *pool_entry = GetGlobalConnectionPoolEntry(pool_id);
-		if (pool_entry->borrower_proc_info_id >= 0)
-			pi = &process_info[pool_entry->borrower_proc_info_id];
+		if (pool_entry->child_id >= 0)
+			pi = &process_info[pool_entry->child_id];
 
 		int idle_duration = 0; // TODO pi->connection_info[pool * MAX_NUM_BACKENDS].client_idle_duration;
 		int cliet_idle_time = pool_config->client_idle_limit;
@@ -1720,7 +1720,7 @@ get_pools(int *nrows)
 
 		for (backend_id = 0; backend_id < NUM_BACKENDS; backend_id++)
 		{
-			snprintf(pools[lines].pool_pid, sizeof(pools[lines].pool_pid), "%d", pool_entry->borrower_pid);
+			snprintf(pools[lines].pool_pid, sizeof(pools[lines].pool_pid), "%d", pool_entry->child_pid);
 
 			if (pi && pi->start_time)
 			{

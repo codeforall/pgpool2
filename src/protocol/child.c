@@ -227,11 +227,11 @@ do_child(int *fds, int ipc_fd)
 	/* initialize connection pool */
 	// pool_init_cp(parent_link_fd);
 	LoadChildConnectionPool(parent_link_fd);
-		/*
-		 * Open pool_passwd in child process.  This is necessary to avoid the file
-		 * descriptor race condition reported in [pgpool-general: 1141].
-		 */
-		if (strcmp("", pool_config->pool_passwd))
+	/*
+		* Open pool_passwd in child process.  This is necessary to avoid the file
+		* descriptor race condition reported in [pgpool-general: 1141].
+		*/
+	if (strcmp("", pool_config->pool_passwd))
 	{
 		pool_reopen_passwd_file();
 	}
@@ -1088,7 +1088,7 @@ connect_backend(StartupPacket *sp, POOL_CONNECTION * frontend, int pool_id)
 	}
 	PG_CATCH();
 	{
-		DiscardBackendConnection(true);
+		DiscardCurrentBackendConnection(true);
 		PG_RE_THROW();
 	}
 	PG_END_TRY();
@@ -2072,7 +2072,7 @@ retry_startup:
 	}
 	else if (lease_type == LEASE_TYPE_DISCART_AND_CREATE)
 	{
-		DiscardBackendConnection(false);	
+		DiscardCurrentBackendConnection(false);
 		ClearChildPooledConnectionData();
 	}
 

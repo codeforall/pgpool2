@@ -20,11 +20,12 @@ typedef struct ConnectionPoolEntry
 {
     PooledBackendClusterConnection endPoint;
     POOL_ENTRY_STATUS status;
+    pid_t child_pid;
     int pool_id;
-    pid_t borrower_pid;
-    int borrower_proc_info_id;
+    int child_id;
     bool need_cleanup;
     time_t leased_time;
+    time_t last_returned_time;
     int leased_count;
 } ConnectionPoolEntry;
 
@@ -46,14 +47,15 @@ typedef struct ConnectionPoolRoutine
     bool (*SyncClusterConnectionDataInPool) (void);
     bool (*PushClusterConnectionToPool) (void);
     void (*ReleaseChildConnectionPool)  (void);
-    PooledBackendNodeConnection *(*GetBackendNodeConnectionForBackendPID)(int backend_pid, int *backend_node_id);
-    PooledBackendClusterConnection* (*GetBackendEndPointForCancelPacket) (CancelPacket *cp);
+    PooledBackendNodeConnection *(*GetBackendNodeConnectionForBackendPID)(int backend_pid, int *backend_node_id); /* Optional overload */
+    PooledBackendClusterConnection* (*GetBackendEndPointForCancelPacket) (CancelPacket *cp); /* optional overload */
     bool (*ClusterConnectionNeedPush)(void);
     const char *(*GetConnectionPoolInfo)(void);
+    int (*GetPoolEntriesCount)(void);
 } ConnectionPoolRoutine;
 
 extern void InstallConnectionPool(const ConnectionPoolRoutine *ConnectionPoolRoutine);
-
+extern int GetPoolEntriesCount(void);
 extern size_t ConnectionPoolRequiredSharedMemSize(void);
 extern const char *GetConnectionPoolInfo(void);
 extern void InitializeConnectionPool(void *shared_mem_ptr);

@@ -3849,7 +3849,7 @@ sync_backend_from_watchdog(void)
 		// ConnectionPoolEntry* connection_pool = GetConnectionPool();
 		// for (i = 0; i < pool_config->max_pool_size; i++)
 		// {
-		// 	if (connection_pool[i].borrower_pid > 0 )
+		// 	if (connection_pool[i].child_pid > 0 )
 		// 	{
 		// 		int		idx;
 		// 		for (idx = 0; idx < down_node_ids_index; idx++)
@@ -3859,7 +3859,7 @@ sync_backend_from_watchdog(void)
 		// 			{
 		// 				ereport(LOG,
 		// 					(errmsg("child process with PID:%d needs restart, because pool %d uses backend %d",
-		// 						connection_pool[i].borrower_pid, i, node_id)));
+		// 						connection_pool[i].child_pid, i, node_id)));
 		// 				/* Do restart or whatever...			restart = true; */
 		// 			}
 		// 		}
@@ -3982,7 +3982,7 @@ sync_backend_from_watchdog(void)
 // 		connection_pool[i].endPoint.node_status_changed |= new_status;
 // 		connection_pool[i].endPoint.node_status_last_changed_time = time(NULL);
 
-// 		if (inform_children && connection_pool[i].borrower_pid > 0 )
+// 		if (inform_children && connection_pool[i].child_pid > 0 )
 // 		{
 // 			int		idx;
 // 			for (idx = 0; idx < down_node_ids_index; idx++)
@@ -3992,7 +3992,7 @@ sync_backend_from_watchdog(void)
 // 				{
 // 					ereport(LOG,
 // 						(errmsg("child process with PID:%d needs restart, because pool %d uses backend %d",
-// 							connection_pool[i].borrower_pid, i, node_id)));
+// 							connection_pool[i].child_pid, i, node_id)));
 // 					/* Do restart or whatever...			restart = true; */
 // 				}
 // 			}
