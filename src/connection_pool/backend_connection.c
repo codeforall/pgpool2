@@ -212,7 +212,7 @@ ImportStartupPacketIntoChild(StartupPacket *sp, char *startup_packet_data)
     if (sp->major == PROTO_MAJOR_V3 && sp->application_name)
     {
         /* adjust the application name pointer in new packet */
-        current_backend_con->sp->application_name = current_backend_con->sp->startup_packet + (current_backend_con->sp->application_name - current_backend_con->sp->startup_packet);
+        current_backend_con->sp->application_name = current_backend_con->sp->startup_packet + (sp->application_name - sp->startup_packet);
     }
     else
         current_backend_con->sp->application_name = NULL;
