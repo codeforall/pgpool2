@@ -194,7 +194,7 @@ ImportStartupPacketIntoChild(StartupPacket *sp, char *startup_packet_data)
 
     if (sp->len <= 0 || sp->len >= MAX_STARTUP_PACKET_LENGTH)
         ereport(ERROR,
-                (errmsg("incorrect packet length (%d)", sp->len)));
+                (errmsg("ImportStartupPacketIntoChild: incorrect packet length (%d)", sp->len)));
 
     current_backend_con->sp = MemoryContextAlloc(TopMemoryContext, sizeof(StartupPacket));
     current_backend_con->sp->len = sp->len;

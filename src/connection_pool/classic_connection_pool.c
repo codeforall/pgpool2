@@ -151,6 +151,12 @@ LPReleaseClusterConnection(bool discard)
     //                     pool_entry->child_pid)));
     //     return false;
     // }
+
+    ereport(LOG,
+            (errmsg("child: released pool_id:%d database:%s used:%s",
+                    pool_entry->pool_id,
+                    pool_entry->endPoint.database,
+                    pool_entry->endPoint.user)));
     if (discard)
     {
         pool_entry->status = POOL_ENTRY_EMPTY;
@@ -161,11 +167,6 @@ LPReleaseClusterConnection(bool discard)
     pool_entry->endPoint.client_disconnection_count++;
     pool_entry->last_returned_time = time(NULL);
 
-    ereport(LOG,
-            (errmsg("child: released pool_id:%d database:%s used:%s",
-                    pool_entry->pool_id,
-                    pool_entry->endPoint.database,
-                    pool_entry->endPoint.user)));
     return true;
 }
 
@@ -290,7 +291,7 @@ export_classic_cluster_connection_data_to_pool(void)
     StartupPacket *sp = current_backend_con->sp;
     int pool_id = current_backend_con->pool_id;
     int i, sock_index;
-    PooledBackendClusterConnection *backend_end_point = GetGlobalPooledBackendClusterConnection(pool_id);
+    PooledBackendClusterConnection *backend_end_point = get_pool_entry_for_pool_id(pool_id);
 
     if (backend_end_point == NULL)
         return false;
@@ -299,7 +300,7 @@ export_classic_cluster_connection_data_to_pool(void)
     if (sp->len <= 0 || sp->len >= MAX_STARTUP_PACKET_LENGTH)
     {
         ereport(ERROR,
-                (errmsg("incorrect packet length (%d)", sp->len)));
+                (errmsg("incorrect startup packet length (%d)", sp->len)));
         return false;
     }
 

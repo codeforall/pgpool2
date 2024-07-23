@@ -597,7 +597,7 @@ backend_cleanup(POOL_CONNECTION * volatile *frontend, BackendClusterConnection *
 	if (ClusterConnectionNeedPush())
 	{
 		ereport(LOG,
-				(errmsg("Backend connection for:%s:%s pushed back to global pool:%d",
+				(errmsg("Backend connection for:%s:%s pushed back to pool:%d",
 				current_backend_connection->backend_end_point->database,current_backend_connection->backend_end_point->user,
 				current_backend_connection->pool_id)));
 		PushClusterConnectionToPool();
