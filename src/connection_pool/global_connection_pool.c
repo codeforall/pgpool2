@@ -35,22 +35,22 @@ static int get_pooled_connection_for_lending(char *user, char *database, int pro
 static bool register_new_lease(int pool_id, LEASE_TYPES lease_type, IPC_Endpoint *ipc_endpoint);
 static bool unregister_lease(int pool_id, IPC_Endpoint *ipc_endpoint);
 
-static size_t
-    GPRequiredSharedMemSize(void)
+static int
+GPGetPoolEntriesCount(void)
 {
-    return sizeof(ConnectionPoolEntry) * pool_config->max_pool_size;
+    return pool_config->max_pool_size;
+}
+
+static size_t
+GPRequiredSharedMemSize(void)
+{
+    return sizeof(ConnectionPoolEntry) * GPGetPoolEntriesCount();
 }
 
 static const char*
 GPGetConnectionPoolInfo(void)
 {
     return "Global Connection Pool";
-}
-
-static int
-GPGetPoolEntriesCount(void)
-{
-    return pool_config->max_pool_size;
 }
 
 static void
@@ -60,7 +60,7 @@ GPInitializeConnectionPool(void *shared_mem_ptr)
     ConnectionPool = (ConnectionPoolEntry *)shared_mem_ptr;
     memset(ConnectionPool, 0, GPRequiredSharedMemSize());
 
-    for (i = 0; i < pool_config->max_pool_size; i++)
+    for (i = 0; i < GPGetPoolEntriesCount(); i++)
     {
         ConnectionPool[i].pool_id = i;
         ConnectionPool[i].child_id = -1;
@@ -154,7 +154,7 @@ GetGlobalConnectionPool(void)
 static ConnectionPoolEntry *
 get_pool_entry_for_pool_id(int pool_id)
 {
-    if (pool_id < 0 || pool_id >= pool_config->max_pool_size)
+    if (pool_id < 0 || GPGetPoolEntriesCount())
         return NULL;
     return &ConnectionPool[pool_id];
 }
@@ -215,7 +215,6 @@ import_pooled_connection_into_child(int pool_id, int *sockets, LEASE_TYPES lease
 
     current_backend_con->pool_id = pool_id;
     current_backend_con->backend_end_point = backend_end_point;
-    current_backend_con->borrowed = true;
     current_backend_con->lease_type = lease_type;
 
     if (lease_type == LEASE_TYPE_EMPTY_SLOT_RESERVED)
@@ -388,12 +387,6 @@ import_pooled_startup_packet_into_child(PooledBackendClusterConnection *backend_
  ***********************************************
  */
 
-ConnectionPoolEntry*
-GetGlobalConnectionPoolEntry(int pool_id)
-{
-    return get_pool_entry_for_pool_id(pool_id);
-}
-
 PooledBackendClusterConnection *
 GetGlobalPooledBackendClusterConnection(int pool_id)
 {
@@ -543,11 +536,12 @@ get_pooled_connection_for_lending(char *user, char *database, int protoMajor, LE
     int free_pool_slot = -1;
     int discard_pool_slot = -1;
     bool found_good_victum = false;
+    time_t closetime = TMINTMAX;
 
     ereport(DEBUG2,
             (errmsg("Finding for user:%s database:%s protoMajor:%d", user, database, protoMajor)));
 
-    for (i = 0; i < pool_config->max_pool_size; i++)
+    for (i = 0; i < GPGetPoolEntriesCount(); i++)
     {
         ereport(DEBUG2,
                 (errmsg("POOL:%d, STATUS:%d [%s:%s]", i, ConnectionPool[i].status,
@@ -568,7 +562,8 @@ get_pooled_connection_for_lending(char *user, char *database, int protoMajor, LE
                 return i;
             }
         }
-        else if (free_pool_slot == -1 && ConnectionPool[i].status == POOL_ENTRY_EMPTY && ConnectionPool[i].child_pid <= 0)
+        
+        if (free_pool_slot == -1 && ConnectionPool[i].status == POOL_ENTRY_EMPTY && ConnectionPool[i].child_pid <= 0)
             free_pool_slot = i;
         /* Also try calculating the victum in case we failed to find even a free connection */
         if (free_pool_slot == -1 && found_good_victum == false)
@@ -581,16 +576,10 @@ get_pooled_connection_for_lending(char *user, char *database, int protoMajor, LE
                     discard_pool_slot = i;
                     found_good_victum = true;
                 }
-                else if (discard_pool_slot == -1)
+                else if (ConnectionPool[i].last_returned_time < closetime)
                 {
+                    closetime = ConnectionPool[i].last_returned_time;
                     discard_pool_slot = i;
-                }
-                else
-                {
-                    /* We already have a discard entry. see which one is better
-                     * TODO we can improve this logic */
-                    if (ConnectionPool[i].leased_count < ConnectionPool[discard_pool_slot].leased_count)
-                        discard_pool_slot = i;
                 }
             }
         }
@@ -609,7 +598,7 @@ get_pooled_connection_for_lending(char *user, char *database, int protoMajor, LE
     }
     /* TODO Find the pooled entry that can be discarded and re-used */
     ereport(LOG,
-            (errmsg("No pooled connection for user:%s database:%s protoMajor:%d, And No Free slot available ", user, database, protoMajor)));
+            (errmsg("No free slot available for user:%s database:%s protoMajor:%d", user, database, protoMajor)));
 
     /* Nothing found */
     *lease_type = LEASE_TYPE_NO_AVAILABLE_SLOT;
@@ -628,7 +617,7 @@ unregister_lease(int pool_id, IPC_Endpoint *ipc_endpoint)
                 (errmsg("only main process can unregister new pool lease")));
         return false;
     }
-    if (pool_id < 0 || pool_id >= pool_config->max_pool_size)
+    if (pool_id < 0 || pool_id >= GPGetPoolEntriesCount())
     {
         ereport(ERROR,
                 (errmsg("pool_id:%d is out of range", pool_id)));
@@ -665,7 +654,7 @@ register_new_lease(int pool_id, LEASE_TYPES lease_type, IPC_Endpoint *ipc_endpoi
                 (errmsg("only main process can register new pool lease")));
         return false;
     }
-    if (pool_id < 0 || pool_id >= pool_config->max_pool_size)
+    if (pool_id < 0 || pool_id >= GPGetPoolEntriesCount())
     {
         ereport(ERROR,
                 (errmsg("pool_id:%d is out of range", pool_id)));

@@ -1700,13 +1700,13 @@ get_pools(int *nrows)
 				backend_id;
 	int			lines = 0;
 
-	POOL_REPORT_POOLS *pools = palloc0(pool_config->max_pool_size * NUM_BACKENDS * sizeof(POOL_REPORT_POOLS));
+	POOL_REPORT_POOLS *pools = palloc0(GetPoolEntriesCount() *NUM_BACKENDS * sizeof(POOL_REPORT_POOLS));
 
-	for (pool_id = 0; pool_id < pool_config->max_pool_size; pool_id++)
+	for (pool_id = 0; pool_id < GetPoolEntriesCount(); pool_id++)
 	{
 		ProcessInfo *pi = NULL;
 
-		ConnectionPoolEntry *pool_entry = GetGlobalConnectionPoolEntry(pool_id);
+		ConnectionPoolEntry *pool_entry = GetConnectionPoolEntry(pool_id);
 		if (pool_entry->child_id >= 0)
 			pi = &process_info[pool_entry->child_id];
 

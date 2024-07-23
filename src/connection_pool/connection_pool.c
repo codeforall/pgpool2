@@ -65,10 +65,18 @@ LoadChildConnectionPool(int intarg)
 BorrowConnectionRes*
 BorrowClusterConnection(char *database, char *user, int major, int minor)
 {
+    BackendClusterConnection *backend_connection;
+    BorrowConnectionRes *res;
+
     Assert(activeConnectionPool);
     Assert(processType == PT_CHILD);
 
-    return activeConnectionPool->BorrowClusterConnection(database, user, major, minor);
+    backend_connection = GetBackendClusterConnection();
+
+    res = activeConnectionPool->BorrowClusterConnection(database, user, major, minor);
+    if (backend_connection && res)
+        backend_connection->lease_type = LEASE_TYPE_FREE;
+    return res;
 }
 
 bool
@@ -82,8 +90,14 @@ LoadBorrowedConnection(BorrowConnectionRes *context)
 bool
 ReleaseClusterConnection(bool discard)
 {
+    BackendClusterConnection *backend_connection;
+
     Assert(activeConnectionPool);
     Assert(processType == PT_CHILD);
+    
+    backend_connection = GetBackendClusterConnection();
+    if (backend_connection)
+        backend_connection->lease_type = LEASE_TYPE_FREE;
     return activeConnectionPool->ReleaseClusterConnection(discard);
 }
 
@@ -132,11 +146,22 @@ GetBackendEndPointForCancelPacket(CancelPacket *cp)
     return get_backend_connection_for_cancel_packer(cp);
 }
 
-bool ClusterConnectionNeedPush(void)
+bool
+ClusterConnectionNeedPush(void)
 {
     Assert(activeConnectionPool);
     Assert(processType == PT_CHILD);
     return activeConnectionPool->ClusterConnectionNeedPush();
+}
+
+ConnectionPoolEntry*
+GetConnectionPoolEntry(int pool_idx)
+{
+    Assert(activeConnectionPool);
+    Assert(ConnectionPool);
+    if (pool_idx < 0 || pool_idx >= GetPoolEntriesCount())
+        return NULL;
+    return &ConnectionPool[pool_idx];
 }
 
 /* Functions that work on any installed connection pool */

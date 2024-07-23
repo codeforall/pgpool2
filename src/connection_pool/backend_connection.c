@@ -16,7 +16,7 @@
 #include <errno.h>
 #include <sys/select.h>
 
-BackendClusterConnection clusterConnection = {.backend_end_point = NULL};
+BackendClusterConnection clusterConnection = {.backend_end_point = NULL, .sp = NULL, .lease_type = LEASE_TYPE_FREE, .pool_id = -1};
 
 bool
 ConnectBackendSocketForBackendCluster(int slot_no);
@@ -24,8 +24,29 @@ ConnectBackendSocketForBackendCluster(int slot_no);
 void
 ResetBackendClusterConnection(void)
 {
+    int i;
+    for (i = 0; i < NUM_BACKENDS; i++)
+    {
+        if (clusterConnection.slots[i].con)
+            pool_close(clusterConnection.slots[i].con, false);
+    }
+    /* Free Startup Packet */
+    if (clusterConnection.sp)
+    {
+        if (clusterConnection.sp->database)
+            pfree(clusterConnection.sp->database);
+        if (clusterConnection.sp->user)
+            pfree(clusterConnection.sp->user);
+
+        pfree(clusterConnection.sp->startup_packet);
+        pfree(clusterConnection.sp);
+        clusterConnection.sp->database = NULL;
+        clusterConnection.sp->user = NULL;
+        clusterConnection.sp = NULL;
+    }
+
     clusterConnection.backend_end_point = NULL;
-    clusterConnection.borrowed = false;
+    clusterConnection.lease_type = LEASE_TYPE_FREE;
     clusterConnection.pool_id = -1;
     memset(clusterConnection.slots, 0, sizeof(BackendNodeConnection) * MAX_NUM_BACKENDS);
 }

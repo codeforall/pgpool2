@@ -4,6 +4,7 @@
 #include "pool.h"
 #include "connection_pool/backend_connection.h"
 
+#define TMINTMAX 0x7fffffff
 
 typedef enum POOL_ENTRY_STATUS
 {
@@ -69,10 +70,10 @@ extern void ReleaseChildConnectionPool(void);
 extern bool ClusterConnectionNeedPush(void);
 extern PooledBackendNodeConnection *GetBackendNodeConnectionForBackendPID(int backend_pid, int *backend_node_id);
 extern PooledBackendClusterConnection *GetBackendEndPointForCancelPacket(CancelPacket *cp);
+extern ConnectionPoolEntry *GetConnectionPoolEntry(int pool_idx);
 
 /* from global_connection_pool.c */
 extern const ConnectionPoolRoutine *GetGlobalConnectionPool(void);
-extern ConnectionPoolEntry *GetGlobalConnectionPoolEntry(int pool_id);
 extern bool InstallSocketsInConnectionPool(ConnectionPoolEntry *pool_entry, int *sockets);
 extern PooledBackendClusterConnection *GetGlobalPooledBackendClusterConnection(int pool_id);
 extern bool GlobalPoolReleasePooledConnection(ConnectionPoolEntry *pool_entry, IPC_Endpoint *ipc_endpoint, bool need_cleanup, bool discard);

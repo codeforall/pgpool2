@@ -14,8 +14,6 @@
 #include <string.h>
 #include <time.h>
 
-#define TMINTMAX 0x7fffffff
-
 typedef struct LPBorrowConnectionRes
 {
     LEASE_TYPES lease_type;
@@ -238,7 +236,6 @@ load_pooled_connection_into_child(ConnectionPoolEntry *selected_pool, LEASE_TYPE
 
     current_backend_con->pool_id = selected_pool->pool_id;
     current_backend_con->backend_end_point = backend_end_point;
-    current_backend_con->borrowed = true;
     current_backend_con->lease_type = lease_type;
 
     if (lease_type == LEASE_TYPE_EMPTY_SLOT_RESERVED)
@@ -471,7 +468,7 @@ static ConnectionPoolEntry *
 get_pool_entry_to_discard(void)
 {
     int i;
-    time_t closetime;
+    time_t closetime = TMINTMAX;
     ConnectionPoolEntry *oldestp;
     ConnectionPoolEntry *connection_pool = firstChildConnectionPool;
 
@@ -483,7 +480,6 @@ get_pool_entry_to_discard(void)
      * discard it.
      */
     oldestp = connection_pool;
-    closetime = TMINTMAX;
 
     for (i = 0; i < pool_config->max_pool; i++)
     {
