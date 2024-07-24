@@ -78,7 +78,7 @@ extern bool InstallSocketsInConnectionPool(ConnectionPoolEntry *pool_entry, int 
 extern PooledBackendClusterConnection *GetGlobalPooledBackendClusterConnection(int pool_id);
 extern bool GlobalPoolReleasePooledConnection(ConnectionPoolEntry *pool_entry, IPC_Endpoint *ipc_endpoint, bool need_cleanup, bool discard);
 extern bool GlobalPoolLeasePooledConnectionToChild(IPC_Endpoint *ipc_endpoint);
-
+extern void GlobalPoolChildProcessDied(int child_id, pid_t child_pid);
 /* from classic_connection_pool.c */
 extern const ConnectionPoolRoutine *GetClassicConnectionPool(void);
 #endif // CONNECTION_POOL_H

@@ -12,7 +12,7 @@ typedef struct PooledBackendNodeConnection
     time_t create_time; /* connection creation time */
     int socket;
     bool connected;
-
+    volatile bool need_reconnect;
     char salt[4]; /* password salt */
 
     volatile bool swallow_termination;

@@ -455,6 +455,29 @@ GlobalPoolReleasePooledConnection(ConnectionPoolEntry *pool_entry, IPC_Endpoint 
     return true;
 }
 
+void
+GlobalPoolChildProcessDied(int child_id, pid_t child_pid)
+{
+    int i;
+    Assert(processType == PT_MAIN);
+    Assert(ipc_endpoint);
+
+    for (i = 0; i < GPGetPoolEntriesCount(); i++)
+    {
+        if (ConnectionPool[i].child_pid == child_pid)
+        {
+            ConnectionPool[i].child_pid = -1;
+            ConnectionPool[i].child_id = -1;
+            ConnectionPool[i].need_cleanup = true;
+            ConnectionPool[i].status = POOL_ENTRY_EMPTY;
+            ConnectionPool[i].last_returned_time = time(NULL);
+            ConnectionPool[i].status = POOL_ENTRY_EMPTY;
+            memset(&ConnectionPool[i].endPoint, 0, sizeof(PooledBackendClusterConnection));
+            break; /* Only one connection can be leased to any child */
+        }
+    }
+}
+
 bool
 GlobalPoolLeasePooledConnectionToChild(IPC_Endpoint *ipc_endpoint)
 {

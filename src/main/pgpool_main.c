@@ -188,7 +188,7 @@ static void sync_backend_from_watchdog(void);
 static void update_backend_quarantine_status(void);
 static int get_server_version(BackendNodeConnection **slots, int node_id);
 static void get_info_from_conninfo(char *conninfo, char *host, int hostlen, char *port, int portlen);
-
+static void child_process_exits(int child_id, pid_t child_pid);
 /*
  * Subroutines of failover()
  */
@@ -2046,14 +2046,7 @@ reaper(void)
 				if (pid == process_info[i].pid)
 				{
 					found = true;
-					if (pool_config->connection_pool_type == GLOBAL_CONNECTION_POOL)
-					{
-						/* Close the ipc endpoint for the exited child */
-						close(ipc_endpoints[i].child_link);
-						ipc_endpoints[i].child_link = -1;
-						ipc_endpoints[i].child_pid = 0;
-						ipc_endpoints[i].proc_info_id = -1;
-					}
+					child_process_exits(i, pid);
 					/* fork a new child */
 					if (!switching && !exiting && restart_child &&
 						pool_config->process_management != PM_DYNAMIC)
@@ -3846,104 +3839,68 @@ sync_backend_from_watchdog(void)
 	/* Kill children and restart them if needed */
 	if (need_to_restart_children)
 	{
-		// ConnectionPoolEntry* connection_pool = GetConnectionPool();
-		// for (i = 0; i < pool_config->max_pool_size; i++)
-		// {
-		// 	if (connection_pool[i].child_pid > 0 )
-		// 	{
-		// 		int		idx;
-		// 		for (idx = 0; idx < down_node_ids_index; idx++)
-		// 		{
-		// 			int	node_id = down_node_ids[idx];
-		// 			if (connection_pool[i].endPoint.load_balancing_node == node_id)
-		// 			{
-		// 				ereport(LOG,
-		// 					(errmsg("child process with PID:%d needs restart, because pool %d uses backend %d",
-		// 						connection_pool[i].child_pid, i, node_id)));
-		// 				/* Do restart or whatever...			restart = true; */
-		// 			}
-		// 		}
-		// 	}
-		// }
-
-		for (i = 0; i < pool_config->num_init_children; i++)
+		if (partial_restart)
 		{
-			bool		restart = false;
 
-			if (partial_restart)
+			for (i = 0; i < GetPoolEntriesCount(); i++)
 			{
-				int			j,
-							k;
+				ConnectionPoolEntry *pool_entry = GetConnectionPoolEntry(i);
+				PooledBackendClusterConnection *pooled_cluster_connection = NULL;
+				ProcessInfo *pi = NULL;
+				pid_t child_pid = -1;
+				int child_id;
+				int idx;
 
-				for (j = 0; j < pool_config->max_pool; j++)
+				Assert(pool_entry);
+
+				if (pool_entry->status == POOL_ENTRY_EMPTY)
+					continue;
+				child_pid = pool_entry->child_id;
+				child_id = pool_entry->child_id;
+				pooled_cluster_connection = &pool_entry->endPoint;
+
+				Assert(child_id < pool_config->num_init_children);
+				for (idx = 0; idx < down_node_ids_index; idx++)
 				{
-					for (k = 0; k < NUM_BACKENDS; k++)
+					int node_id = down_node_ids[idx];
+
+					/*
+						* If this pool entry is not leased to any child process
+						* we just need to mark this enrry needs cleanup
+						*/
+					if (pooled_cluster_connection->conn_slots[node_id].connected)
+						pooled_cluster_connection->conn_slots[node_id].need_reconnect = true;
+
+					if (child_pid < 0)
+						continue;
+					/*
+						* So the pool entry is leased, check if it is using the failed node.
+						*/
+
+					pi = &process_info[pool_entry->child_id];
+					Assert(pi->pid == child_pid);
+
+					if (pooled_cluster_connection->load_balancing_node == node_id)
 					{
-						int			idx;
-						ConnectionInfo *con = pool_coninfo(i, j, k);
-
-						for (idx = 0; idx < down_node_ids_index; idx++)
-						{
-							int			node_id = down_node_ids[idx];
-
-							if (con->connected && con->load_balancing_node == node_id)
-							{
-								ereport(LOG,
-										(errmsg("child process with PID:%d needs restart, because pool %d uses backend %d",
-												process_info[i].pid, j, node_id)));
-								restart = true;
-								break;
-							}
-							if (restart)
-								break;
-						}
+						ereport(LOG,
+								(errmsg("child pid %d needs to restart because pool %d uses backend %d",
+										child_pid, pool_entry->pool_id, node_id)));
+						kill(child_pid, SIGQUIT); /* TODO: do not quit. Tell child to take appropriate action. */
 					}
 				}
 			}
-			else
-			{
-				restart = true;
-			}
-
-			if (restart)
+		}
+		else
+		{
+			/*
+				* Set restart request to each child. Children will exit(1) whenever
+				* they are convenient.
+				*/
+			for (i = 0; i < pool_config->num_init_children; i++)
 			{
 				if (process_info[i].pid)
-				{
-					if (pool_config->connection_pool_type == GLOBAL_CONNECTION_POOL)
-					{
-						/* Close the ipc endpoint for the exiting child */
-						close(ipc_endpoints[i].child_link);
-						ipc_endpoints[i].child_link = -1;
-						ipc_endpoints[i].child_pid = 0;
-						ipc_endpoints[i].proc_info_id = -1;
-					}
-
-					kill(process_info[i].pid, SIGQUIT);
-
-					process_info[i].pid = fork_a_child(fds, i);
-					process_info[i].start_time = time(NULL);
-					process_info[i].client_connection_count = 0;
-					process_info[i].status = WAIT_FOR_CONNECT;
-					process_info[i].connected = 0;
-					process_info[i].wait_for_connect = 0;
-					process_info[i].pooled_connections = 0;
-				}
+					process_info[i].need_to_restart = 1;
 			}
-			else
-				process_info[i].need_to_restart = 1;
-		}
-	}
-
-	else
-	{
-		/*
-		 * Set restart request to each child. Children will exit(1) whenever
-		 * they are convenient.
-		 */
-		for (i = 0; i < pool_config->num_init_children; i++)
-		{
-			if (process_info[i].pid)
-				process_info[i].need_to_restart = 1;
 		}
 	}
 
@@ -3967,38 +3924,6 @@ sync_backend_from_watchdog(void)
 	}
 }
 
-// static void
-// set_node_status_changed_in_pool(unsigned char request_details, bool primary_changed, bool inform_children, int *down_node_ids, int down_node_ids_index)
-// {
-// 	ConnectionPoolEntry* connection_pool = GetConnectionPool();
-// 	int new_status = 0;
-// 	int i;
-
-// 	for (i = 0; i < pool_config->max_pool_size; i++)
-// 	{
-// 		if (connection_pool[i].status == POOL_ENTRY_EMPTY)
-// 			continue;
-
-// 		connection_pool[i].endPoint.node_status_changed |= new_status;
-// 		connection_pool[i].endPoint.node_status_last_changed_time = time(NULL);
-
-// 		if (inform_children && connection_pool[i].child_pid > 0 )
-// 		{
-// 			int		idx;
-// 			for (idx = 0; idx < down_node_ids_index; idx++)
-// 			{
-// 				int	node_id = down_node_ids[idx];
-// 				if (connection_pool[i].endPoint.load_balancing_node == node_id)
-// 				{
-// 					ereport(LOG,
-// 						(errmsg("child process with PID:%d needs restart, because pool %d uses backend %d",
-// 							connection_pool[i].child_pid, i, node_id)));
-// 					/* Do restart or whatever...			restart = true; */
-// 				}
-// 			}
-// 		}
-// 	}
-// }
 /*
  * Obtain backend server version number and cache it.  Note that returned
  * version number is in the static memory area.
@@ -4415,7 +4340,7 @@ handle_failover_request(FAILOVER_CONTEXT *failover_context, int node_id)
 static void
 kill_failover_children(FAILOVER_CONTEXT *failover_context, int node_id)
 {
-	int		i, j, k;
+	int		i;
 	/*
 	 * On 2011/5/2 Tatsuo Ishii says: if mode is streaming replication and
 	 * request is NODE_UP_REQUEST (failback case) we don't need to restart
@@ -4452,6 +4377,14 @@ kill_failover_children(FAILOVER_CONTEXT *failover_context, int node_id)
 	 * requested node id is the former primary node.
 	 *
 	 * See bug 672 for more details.
+	 *
+	 * Muhammad Usama: Instead of main process restarting the children, we
+	 * can offload this decision to individual child process. This will
+	 * allow the child process to restart only if it has a leased connection
+	 * and actively using the failed node. Moreover we can enhance this
+	 * further by allowing the child process to decide if it can live
+	 * without restarting, for example if their is no transaction in progress.
+	 *
 	 */
 	if (STREAM && failover_context->reqkind == NODE_UP_REQUEST && failover_context->all_backend_down == false &&
 		Req_info->primary_node_id >= 0 && Req_info->primary_node_id != node_id)
@@ -4493,38 +4426,46 @@ kill_failover_children(FAILOVER_CONTEXT *failover_context, int node_id)
 		 * gloabl pool
 		 */
 
-		for (i = 0; i < pool_config->num_init_children; i++)
+		for (i =0; i < GetPoolEntriesCount(); i++)
 		{
-			bool		restart = false;
+			ConnectionPoolEntry *pool_entry = GetConnectionPoolEntry(i);
+			PooledBackendClusterConnection* pooled_cluster_connection = NULL;
+			ProcessInfo *pi = NULL;
+			pid_t child_pid = -1;
+			int child_id;
 
-			for (j = 0; j < pool_config->max_pool; j++)
+			Assert(pool_entry);
+
+			if (pool_entry->status == POOL_ENTRY_EMPTY)
+				continue;
+			child_pid = pool_entry->child_id;
+			child_id = pool_entry->child_id;
+			pooled_cluster_connection = &pool_entry->endPoint;
+
+			Assert(child_id < pool_config->num_init_children);
+
+			/*
+			 * If this pool entry is not leased to any child process
+			 * we just need to mark this enrry needs cleanup
+			 */
+			if (pooled_cluster_connection->conn_slots[node_id].connected)
+				pooled_cluster_connection->conn_slots[node_id].need_reconnect = true;
+
+			if (child_pid < 0)
+				continue;
+			/*
+			 * So the pool entry is leased, check if it is using the failed node.
+			 */
+
+			pi = &process_info[pool_entry->child_id];
+			Assert(pi->pid == child_pid);
+			
+			if (pooled_cluster_connection->load_balancing_node == node_id)
 			{
-				for (k = 0; k < NUM_BACKENDS; k++)
-				{
-					ConnectionInfo *con = pool_coninfo(i, j, k);
-
-					if (con->connected && con->load_balancing_node == node_id)
-					{
-						ereport(LOG,
-								(errmsg("child pid %d needs to restart because pool %d uses backend %d",
-										process_info[i].pid, j, node_id)));
-						restart = true;
-						break;
-					}
-				}
-			}
-
-			if (restart)
-			{
-				pid_t		pid = process_info[i].pid;
-
-				if (pid)
-				{
-					kill(pid, SIGQUIT);
-					ereport(DEBUG1,
-							(errmsg("failover handler"),
-							 errdetail("kill process with PID:%d", pid)));
-				}
+				ereport(LOG,
+						(errmsg("child pid %d needs to restart because pool %d uses backend %d",
+								child_pid, pool_entry->pool_id , node_id)));
+				kill(child_pid, SIGQUIT); /* TODO: do not quit. Tell child to take appropriate action. */
 			}
 		}
 	}
@@ -4778,7 +4719,7 @@ save_node_info(FAILOVER_CONTEXT *failover_context, int new_primary_node_id, int 
 static void
 exec_child_restart(FAILOVER_CONTEXT *failover_context, int node_id)
 {
-	int		i, j, k;
+	int		i;
 
 	if (failover_context->need_to_restart_children)
 	{
@@ -4799,21 +4740,46 @@ exec_child_restart(FAILOVER_CONTEXT *failover_context, int node_id)
 
 			if (failover_context->partial_restart)
 			{
-				for (j = 0; j < pool_config->max_pool; j++)
+				for (i = 0; i < GetPoolEntriesCount(); i++)
 				{
-					for (k = 0; k < NUM_BACKENDS; k++)
+					ConnectionPoolEntry *pool_entry = GetConnectionPoolEntry(i);
+					PooledBackendClusterConnection *pooled_cluster_connection = NULL;
+					ProcessInfo *pi = NULL;
+					pid_t child_pid = -1;
+					int child_id;
+
+					Assert(pool_entry);
+
+					if (pool_entry->status == POOL_ENTRY_EMPTY)
+						continue;
+					child_pid = pool_entry->child_id;
+					child_id = pool_entry->child_id;
+					pooled_cluster_connection = &pool_entry->endPoint;
+
+					Assert(child_id < pool_config->num_init_children);
+
+					/*
+					 * If this pool entry is not leased to any child process
+					 * we just need to mark this enrry needs cleanup
+					 */
+					if (pooled_cluster_connection->conn_slots[node_id].connected)
+						pooled_cluster_connection->conn_slots[node_id].need_reconnect = true;
+
+					if (child_pid < 0)
+						continue;
+					/*
+					 * So the pool entry is leased, check if it is using the failed node.
+					 */
+
+					pi = &process_info[pool_entry->child_id];
+					Assert(pi->pid == child_pid);
+
+					if (pooled_cluster_connection->load_balancing_node == node_id)
 					{
-						ConnectionInfo *con = pool_coninfo(i, j, k);
-
-						if (con->connected && con->load_balancing_node == node_id)
-						{
-
-							ereport(LOG,
-									(errmsg("child pid %d needs to restart because pool %d uses backend %d",
-											process_info[i].pid, j, node_id)));
-							restart = true;
-							break;
-						}
+						ereport(LOG,
+								(errmsg("child pid %d needs to restart because pool %d uses backend %d",
+										child_pid, pool_entry->pool_id, node_id)));
+						kill(child_pid, SIGQUIT); /* TODO: do not quit. Tell child to take appropriate action. */
 					}
 				}
 			}
@@ -4824,14 +4790,7 @@ exec_child_restart(FAILOVER_CONTEXT *failover_context, int node_id)
 			{
 				if (process_info[i].pid)
 				{
-					if (pool_config->connection_pool_type == GLOBAL_CONNECTION_POOL)
-					{
-						/* Close the ipc endpoint for the exiting child */
-						close(ipc_endpoints[i].child_link);
-						ipc_endpoints[i].child_link = -1;
-						ipc_endpoints[i].child_pid = 0;
-						ipc_endpoints[i].proc_info_id = -1;
-					}
+					child_process_exits(i, process_info[i].pid);
 					kill(process_info[i].pid, SIGQUIT);
 
 					process_info[i].pid = fork_a_child(fds, i);
@@ -5360,4 +5319,24 @@ handle_child_ipc_requests(void)
 		}
 	}
 	return ret;
+}
+
+static void
+child_process_exits(int child_id, pid_t child_pid)
+{
+	Assert(child_id >= 0 && child_id < pool_config->num_init_children);
+	Assert(child_pid > 0);
+	if (pool_config->connection_pool_type == GLOBAL_CONNECTION_POOL)
+	{
+		/*
+		 * Inform global connection pool to release
+		 * leased connection (if any) for this child
+		 */
+		GlobalPoolChildProcessDied(child_id, child_pid);
+		/* Close the ipc endpoint for the exited child */
+		close(ipc_endpoints[child_id].child_link);
+		ipc_endpoints[child_id].child_link = -1;
+		ipc_endpoints[child_id].child_pid = 0;
+		ipc_endpoints[child_id].proc_info_id = -1;
+	}
 }

@@ -837,7 +837,7 @@ pool_do_auth(POOL_CONNECTION * frontend, BackendClusterConnection * cp)
 			}
 			CONNECTION_SLOT(cp, i).key = cp->slots[i].key =  key;
 
-			ereport(LOG,(errmsg("pool_id:%d slot:%d pid=%d key=%d backend_endpoint%p",cp->pool_id, i, pid,key,cp->backend_end_point)));
+			ereport(LOG,(errmsg("pool_id:%d slot:%d pid=%d key=%d backend_endpoint:%p",cp->pool_id, i, pid,key,cp->backend_end_point)));
 
 			cp->backend_end_point->conn_slots[i].swallow_termination = 0;
 		}
