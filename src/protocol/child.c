@@ -281,7 +281,7 @@ do_child(int *fds, int ipc_fd)
 			pool_session_context_destroy();
 
 			/* Mark this connection pool is not connected from frontend */
-			// pool_coninfo_unset_frontend_connected();
+			pool_coninfo_unset_frontend_connected();
 
 			/* increment queries counter if necessary */
 			if (pool_config->child_max_connections > 0)
@@ -322,6 +322,8 @@ do_child(int *fds, int ipc_fd)
 		/* reset per iteration memory context */
 		MemoryContextSwitchTo(ProcessLoopContext);
 		MemoryContextResetAndDeleteChildren(ProcessLoopContext);
+
+		ResetBackendClusterConnection();
 
 		backend = NULL;
 		idle = 1;
@@ -586,25 +588,22 @@ backend_cleanup(POOL_CONNECTION * volatile *frontend, BackendClusterConnection *
 
 	if (cache_connection == false)
 	{
-		pool_send_frontend_exits(backend);
-		if (sp)
-			pool_discard_cp(sp->user, sp->database, sp->major);
+		DiscardCurrentBackendConnection();
 	}
+	else if (ClusterConnectionNeedPush())
+	{
+		BackendClusterConnection *current_backend_connection = GetBackendClusterConnection();
+		ereport(LOG,
+				(errmsg("Backend connection for:%s:%s pushed back to pool:%d",
+						current_backend_connection->backend_end_point->database, current_backend_connection->backend_end_point->user,
+						current_backend_connection->pool_id)));
+		PushClusterConnectionToPool();
+	}
+
+	ReleaseClusterConnection(!cache_connection);
 
 	/* reset the config parameters */
 	reset_all_variables(NULL, NULL);
-	BackendClusterConnection *current_backend_connection = GetBackendClusterConnection();
-	if (ClusterConnectionNeedPush())
-	{
-		ereport(LOG,
-				(errmsg("Backend connection for:%s:%s pushed back to pool:%d",
-				current_backend_connection->backend_end_point->database,current_backend_connection->backend_end_point->user,
-				current_backend_connection->pool_id)));
-		PushClusterConnectionToPool();
-	}
-	
-	ReleaseClusterConnection(false);
-	ResetBackendClusterConnection();
 	return cache_connection;
 }
 
@@ -835,7 +834,7 @@ connect_using_existing_connection(POOL_CONNECTION * frontend,
 
 			for (i = 0; i < NUM_BACKENDS; i++)
 			{
-				if (VALID_BACKEND(i))
+				if (VALID_BACKEND(i) && CONNECTION(backend, i))
 				{
 					/*
 					 * We want to catch and ignore errors in do_command if a
@@ -845,7 +844,7 @@ connect_using_existing_connection(POOL_CONNECTION * frontend,
 					 * "SET application_name" command if the backend goes
 					 * down.
 					 */
-					pool_param_debug_print(&backend->backend_end_point->params);
+					// pool_param_debug_print(&backend->backend_end_point->params);
 					// pool_init_params(&backend->backend_end_point->params);
 
 					PG_TRY();
@@ -1088,7 +1087,8 @@ connect_backend(StartupPacket *sp, POOL_CONNECTION * frontend, int pool_id)
 	}
 	PG_CATCH();
 	{
-		DiscardCurrentBackendConnection(true);
+		DiscardCurrentBackendConnection();
+		ReleaseClusterConnection(true);
 		PG_RE_THROW();
 	}
 	PG_END_TRY();
@@ -2061,18 +2061,39 @@ retry_startup:
 
 	if (lease_type == LEASE_TYPE_READY_TO_USE)
 	{
-		/* TODO Handle broken sockets and startup packet comparison */
-		ereport(LOG,
+		BackendClusterConnection* current_cluster_con = GetBackendClusterConnection();
+		if (current_cluster_con->sp == NULL)
+		{
+			ereport(ERROR,
+				(errmsg("No startup packet found in the borrowed connection"),
+					 errdetail("database:%s user:%s protoMajor:%d", frontend->database, frontend->username, frontend->protoVersion)));
+		}
+		if (current_cluster_con->sp->len != sp->len || memcmp(current_cluster_con->sp->startup_packet, sp->startup_packet, sp->len) != 0)
+		{
+			ereport(LOG,
+				(errmsg("startup packet mismatch in the borrowed connection"),
+					 errdetail("database:%s user:%s protoMajor:%d", frontend->database, frontend->username, frontend->protoVersion)));
+			ereport(LOG,
+				(errmsg("discarding ready to use connection because of startup packet mismatch"),
+					 errdetail("database:%s user:%s protoMajor:%d", sp->database, sp->user, sp->major)));
+			DiscardCurrentBackendConnection();
+			ClearChildPooledConnectionData();
+			lease_type = LEASE_TYPE_EMPTY_SLOT_RESERVED;
+		}
+		else
+		{
+			ereport(LOG,
 				(errmsg("Using the exisiting pooled connection at pool_id:%d", pro_info->pool_id),
-				 errdetail("database:%s user:%s protoMajor:%d", frontend->database, frontend->username, frontend->protoVersion)));
-		connect_missing_backend_nodes(sp, frontend, pro_info->pool_id);
-		if (!connect_using_existing_connection(frontend, backend, sp))
-			return NULL;
-		return backend;
+					errdetail("database:%s user:%s protoMajor:%d", frontend->database, frontend->username, frontend->protoVersion)));
+			connect_missing_backend_nodes(sp, frontend, pro_info->pool_id);
+			if (!connect_using_existing_connection(frontend, backend, sp))
+				return NULL;
+			return backend;
+		}
 	}
 	else if (lease_type == LEASE_TYPE_DISCART_AND_CREATE)
 	{
-		DiscardCurrentBackendConnection(false);
+		DiscardCurrentBackendConnection();
 		ClearChildPooledConnectionData();
 	}
 

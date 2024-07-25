@@ -143,16 +143,28 @@ bool
 ProcessChildRequestOnMain(IPC_Endpoint* ipc_endpoint)
 {
     char type;
+    int ret = 0;
 	if (processType != PT_MAIN)
 		return false;
 
     ereport(DEBUG2,
             (errmsg("New request received from from child:%d", ipc_endpoint->child_pid)));
-
-    if (socket_read(ipc_endpoint->child_link, &type, 1, MAX_WAIT_FOR_PARENT_RESPONSE) != 1)
+    
+    ret = socket_read(ipc_endpoint->child_link, &type, 1, MAX_WAIT_FOR_PARENT_RESPONSE);
+    if (ret != 1)
     {
         ereport(LOG,
                 (errmsg("failed to read IPC packet type:%c from child:%d", type, ipc_endpoint->child_pid)));
+        /* Child could've been dead so we might have got remote end closed the connection */
+        if (ret == 0)
+        {
+            ereport(LOG,
+                    (errmsg("remote end closed the connection for child:%d", ipc_endpoint->child_pid),
+                        errdetail("closing the connection for child:%d", ipc_endpoint->child_pid)));
+            close(ipc_endpoint->child_link);
+            ipc_endpoint->child_link = -1;
+            return false;
+        }
         return false;
     }
     ereport(DEBUG2,
@@ -217,8 +229,9 @@ SendBackendSocktesToMainPool(int parent_link, int count, int *sockets)
     char type = IPC_PUSH_CONNECTION_TO_POOL;
     if (write(parent_link, &type, 1) != 1)
     {
-        ereport(WARNING,
-                (errmsg("failed to write IPC packet type:%c to global pool", type)));
+        close(parent_link);
+        ereport(FATAL,
+                (errmsg("failed to write IPC packet type:%c to parent:%d", type, parent_link)));
         return false;
     }
     return TransferSocketsBetweenProcesses(parent_link, count, sockets);
@@ -234,8 +247,9 @@ ReleasePooledConnectionFromChild(int parent_link, bool discard)
 
     if (write(parent_link, &type, 1) != 1)
     {
-        ereport(WARNING,
-                (errmsg("failed to write IPC packet type:%c to global pool", type)));
+        close(parent_link);
+        ereport(FATAL,
+                (errmsg("failed to write IPC packet type:%c to parent:%d", type, parent_link)));
         return false;
     }
     return true;

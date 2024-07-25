@@ -26,7 +26,6 @@
 
 extern void pool_init_cp(int parent_link_fd);
 
-bool DiscardCurrentBackendConnection(bool release_pool);
 bool ClearChildPooledConnectionData(void);
 
 extern BackendClusterConnection *GetBackendClusterConnection(void);

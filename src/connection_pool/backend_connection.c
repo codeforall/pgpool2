@@ -24,31 +24,9 @@ ConnectBackendSocketForBackendCluster(int slot_no);
 void
 ResetBackendClusterConnection(void)
 {
-    int i;
-    for (i = 0; i < NUM_BACKENDS; i++)
-    {
-        if (clusterConnection.slots[i].con)
-            pool_close(clusterConnection.slots[i].con, false);
-    }
-    /* Free Startup Packet */
-    if (clusterConnection.sp)
-    {
-        if (clusterConnection.sp->database)
-            pfree(clusterConnection.sp->database);
-        if (clusterConnection.sp->user)
-            pfree(clusterConnection.sp->user);
-
-        pfree(clusterConnection.sp->startup_packet);
-        pfree(clusterConnection.sp);
-        clusterConnection.sp->database = NULL;
-        clusterConnection.sp->user = NULL;
-        clusterConnection.sp = NULL;
-    }
-
-    clusterConnection.backend_end_point = NULL;
+    memset(&clusterConnection, 0, sizeof(BackendClusterConnection));
     clusterConnection.lease_type = LEASE_TYPE_FREE;
     clusterConnection.pool_id = -1;
-    memset(clusterConnection.slots, 0, sizeof(BackendNodeConnection) * MAX_NUM_BACKENDS);
 }
 
 BackendClusterConnection *
@@ -116,27 +94,20 @@ bool ClearChildPooledConnectionData(void)
     return true;
 }
 
-/* Discard the backend connection.
- * If the connection is borrowed from the global pool
- * clean it up too
+/*
+ * Discard the current backend connection.
  */
-bool DiscardCurrentBackendConnection(bool release_pool)
+bool
+DiscardCurrentBackendConnection(void)
 {
     BackendClusterConnection *current_backend_con;
     int i, pool_id;
 
-    if (processType != PT_CHILD)
-        return false;
+    Assert(processType == PT_CHILD);
 
     current_backend_con = GetBackendClusterConnection();
 
-    if (release_pool)
-        ReleaseClusterConnection(release_pool);
-
     pool_id = current_backend_con->pool_id;
-
-    // if (release_pool && pool_id >= 0 && pool_id < pool_config->max_pool_size)
-    //     ReleasePooledConnectionFromChild(parent_link, true);
 
     pool_send_frontend_exits(current_backend_con);
 
@@ -164,11 +135,8 @@ bool DiscardCurrentBackendConnection(bool release_pool)
         pfree(current_backend_con->sp);
         current_backend_con->sp = NULL;
     }
-    if (!release_pool)
-    {
-        /* Restore the pool_id */
-        current_backend_con->pool_id = pool_id;
-    }
+    /* Restore the pool_id */
+    current_backend_con->pool_id = pool_id;
     return true;
 }
 

@@ -5333,7 +5333,8 @@ child_process_exits(int child_id, pid_t child_pid)
 		 */
 		GlobalPoolChildProcessDied(child_id, child_pid);
 		/* Close the ipc endpoint for the exited child */
-		close(ipc_endpoints[child_id].child_link);
+		if (ipc_endpoints[child_id].child_link > 0)
+			close(ipc_endpoints[child_id].child_link);
 		ipc_endpoints[child_id].child_link = -1;
 		ipc_endpoints[child_id].child_pid = 0;
 		ipc_endpoints[child_id].proc_info_id = -1;

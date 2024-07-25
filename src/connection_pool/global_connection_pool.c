@@ -229,7 +229,7 @@ import_pooled_connection_into_child(int pool_id, int *sockets, LEASE_TYPES lease
         {
             /*
              * Although we have received the socket for backend slot
-             * but the global status of slot indicates that it is marekd
+             * but the global status of slot indicates that it is marked
              * as down. Probably because of failover.
              * So we do not want to use it
              * We also want to mark the slot as down in the global pool
@@ -274,10 +274,14 @@ import_pooled_connection_into_child(int pool_id, int *sockets, LEASE_TYPES lease
                 {
                     ereport(LOG, (errmsg("Backend %d was down when pool was created. Sock successfully connected:%d", i,
                                          current_backend_con->slots[i].state)));
+                    *(my_backend_status[i]) = CON_UP;
+
                     /* Connection was successfull */
                 }
             }
         }
+        else
+            *(my_backend_status[i]) = BACKEND_INFO(i).backend_status;
     }
     return true;
 }

@@ -164,6 +164,7 @@ typedef struct BackendNodeConnection
     POOL_CONNECTION *con;
 } BackendNodeConnection;
 
+
 typedef struct BackendClusterConnection
 {
     StartupPacket *sp;                  /* startup packet info */
@@ -183,6 +184,7 @@ extern bool SaveAuthKindForBackendConnection(int auth_kind);
 extern int GetAuthKindForCurrentPoolBackendConnection(void);
 extern void ImportStartupPacketIntoChild(StartupPacket *sp, char *startup_packet_data);
 extern bool ConnectBackendSocketForBackendCluster(int slot_no);
+extern bool DiscardCurrentBackendConnection(void);
 
 extern int check_socket_status(int fd);
     /* in pgpool_main.c */
