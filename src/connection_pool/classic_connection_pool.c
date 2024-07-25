@@ -60,7 +60,7 @@ static void
 LPInitializeConnectionPool(void *shared_mem_ptr)
 {
     int i;
-    Assert(ProcessType == PT_MAIN);
+    Assert(processType == PT_MAIN);
     ConnectionPool = (ConnectionPoolEntry *)shared_mem_ptr;
     memset(ConnectionPool, 0, LPRequiredSharedMemSize());
 
@@ -223,7 +223,6 @@ static bool
 load_pooled_connection_into_child(ConnectionPoolEntry *selected_pool, LEASE_TYPES lease_type)
 {
     int i;
-    int *backend_ids;
     PooledBackendClusterConnection *backend_end_point;
     BackendClusterConnection *current_backend_con = GetBackendClusterConnection();
 
@@ -232,8 +231,6 @@ load_pooled_connection_into_child(ConnectionPoolEntry *selected_pool, LEASE_TYPE
 
     ereport(DEBUG2,
             (errmsg("load_pooled_connection_into_child pool_id:%d backend_end_point:%p LeaseType:%d", selected_pool->pool_id, backend_end_point, lease_type)));
-
-    backend_ids = backend_end_point->backend_ids;
 
     current_backend_con->pool_id = selected_pool->pool_id;
     current_backend_con->backend_end_point = backend_end_point;
@@ -291,7 +288,12 @@ export_classic_cluster_connection_data_to_pool(void)
     StartupPacket *sp = current_backend_con->sp;
     int pool_id = current_backend_con->pool_id;
     int i, sock_index;
-    PooledBackendClusterConnection *backend_end_point = get_pool_entry_for_pool_id(pool_id);
+    ConnectionPoolEntry *pool_entry = get_pool_entry_for_pool_id(pool_id);
+    PooledBackendClusterConnection *backend_end_point;
+
+    if (pool_entry == NULL)
+        return false;
+    backend_end_point = &pool_entry->endPoint;
 
     if (backend_end_point == NULL)
         return false;
@@ -370,7 +372,7 @@ pool_get_cp(char *user, char *database, int protoMajor, bool check_socket, Conne
     ConnectionPoolEntry *connection_pool = firstChildConnectionPool;
 
     Assert(processType == PT_CHILD);
-    Assert(connection_pool)
+    Assert(connection_pool);
 
     POOL_SETMASK2(&BlockSig, &oldmask);
 
@@ -474,7 +476,7 @@ get_pool_entry_to_discard(void)
     ConnectionPoolEntry *connection_pool = firstChildConnectionPool;
 
     Assert(processType == PT_CHILD);
-    Assert(connection_pool)
+    Assert(connection_pool);
 
     /*
      * no empty connection slot was found. look for the oldest connection and

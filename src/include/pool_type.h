@@ -58,6 +58,21 @@ typedef char bool;
 #endif							/* not C++ */
 #endif							/* __BEOS__ */
 
+/* from include/c.h */
+
+/*
+ * CppAsString
+ *		Convert the argument to a string, using the C preprocessor.
+ * CppConcat
+ *		Concatenate two arguments together, using the C preprocessor.
+ *
+ * Note: There used to be support here for pre-ANSI C compilers that didn't
+ * support # and ##.  Nowadays, these macros are just for clarity and/or
+ * backward compatibility with existing PostgreSQL code.
+ */
+#define CppAsString(identifier) #identifier
+#define CppConcat(x, y) x##y
+
 /* ----------------------------------------------------------------
  *              Section 5:  offsetof, lengthof, endof, alignment
  * ----------------------------------------------------------------
@@ -279,7 +294,7 @@ typedef void (*pg_on_exit_callback) (int code, Datum arg);
 #define Trap(condition, errorType)
 #define TrapMacro(condition, errorType)	(true)
 
-#elif defined(FRONTEND)
+#elif defined(POOL_PRIVATE)
 #include <assert.h>
 #define Assert(p) assert(p)
 #define AssertMacro(p)	((void) assert(p))

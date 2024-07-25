@@ -827,7 +827,8 @@ pool_do_auth(POOL_CONNECTION * frontend, BackendClusterConnection * cp)
 						 errdetail("failed to read pid in slot %d", i)));
 			}
 
-			CONNECTION_SLOT(cp, i).pid = cp->slots[i].pid = pid;
+			CONNECTION_SLOT(cp, i).pid = pid;
+			cp->slots[i].pid = pid;
 			/* read key */
 			if (pool_read(CONNECTION(cp, i), &key, sizeof(key)) < 0)
 			{
@@ -835,7 +836,8 @@ pool_do_auth(POOL_CONNECTION * frontend, BackendClusterConnection * cp)
 						(errmsg("authentication failed"),
 						 errdetail("failed to read key in slot %d", i)));
 			}
-			CONNECTION_SLOT(cp, i).key = cp->slots[i].key =  key;
+			CONNECTION_SLOT(cp, i).key =  key;
+			cp->slots[i].key = key;
 
 			ereport(LOG,(errmsg("pool_id:%d slot:%d pid=%d key=%d backend_endpoint:%p",cp->pool_id, i, pid,key,cp->backend_end_point)));
 

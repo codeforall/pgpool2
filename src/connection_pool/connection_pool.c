@@ -42,7 +42,7 @@ GetConnectionPoolInfo(void)
 {
     if (! activeConnectionPool)
         return "No connection pool installed";
-    Assert(activeConnectionPool->GetConnectionPoolInfo)
+    Assert(activeConnectionPool->GetConnectionPoolInfo);
     return activeConnectionPool->GetConnectionPoolInfo();
 }
 

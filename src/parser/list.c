@@ -20,9 +20,9 @@
 #include "utils/elog.h"
 #include <stdlib.h>
 #include "utils/palloc.h"
+#include "utils/memutils.h"
+#include "utils/memdebug.h"
 #include "pg_list.h"
-
-static inline MemoryContext GetMemoryChunkContext(void *pointer);
 
 /*
  * The previous List implementation, since it used a separate palloc chunk
@@ -1694,38 +1694,3 @@ list_oid_cmp(const ListCell *p1, const ListCell *p2)
 	return 0;
 }
 
-/*
- * GetMemoryChunkContext
- *      Given a currently-allocated chunk, determine the context
- *      it belongs to.
- *
- * All chunks allocated by any memory context manager are required to be
- * preceded by the corresponding MemoryContext stored, without padding, in the
- * preceding sizeof(void*) bytes.  A currently-allocated chunk must contain a
- * backpointer to its owning context.  The backpointer is used by pfree() and
- * repalloc() to find the context to call.
- */
-#ifndef FRONTEND
-static inline MemoryContext
-GetMemoryChunkContext(void *pointer)
-{
-    MemoryContext context;
-
-    /*
-     * Try to detect bogus pointers handed to us, poorly though we can.
-     * Presumably, a pointer that isn't MAXALIGNED isn't pointing at an
-     * allocated chunk.
-     */
-    Assert(pointer != NULL);
-    Assert(pointer == (void *) MAXALIGN(pointer));
-
-    /*
-     * OK, it's probably safe to look at the context.
-     */
-    context = *(MemoryContext *) (((char *) pointer) - sizeof(void *));
-
-    AssertArg(MemoryContextIsValid(context));
-
-    return context;
-}
-#endif

@@ -405,7 +405,7 @@ InstallSocketsInConnectionPool(ConnectionPoolEntry *pool_entry, int *sockets)
 {
     int i;
 
-    Assert(processType == PT_MAIN)
+    Assert(processType == PT_MAIN);
 
     if (!pool_entry)
         return false;
@@ -464,7 +464,6 @@ GlobalPoolChildProcessDied(int child_id, pid_t child_pid)
 {
     int i;
     Assert(processType == PT_MAIN);
-    Assert(ipc_endpoint);
 
     for (i = 0; i < GPGetPoolEntriesCount(); i++)
     {

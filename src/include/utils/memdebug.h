@@ -17,6 +17,8 @@
 #ifndef MEMDEBUG_H
 #define MEMDEBUG_H
 
+#include <string.h>
+
 #ifdef USE_VALGRIND
 #include <valgrind/memcheck.h>
 #else
@@ -43,5 +45,32 @@ wipe_mem(void *ptr, size_t size)
 }
 
 #endif							/* CLOBBER_FREED_MEMORY */
+
+#ifdef MEMORY_CONTEXT_CHECKING
+
+static inline void
+set_sentinel(void *base, Size offset)
+{
+	char *ptr = (char *)base + offset;
+
+	VALGRIND_MAKE_MEM_UNDEFINED(ptr, 1);
+	*ptr = 0x7E;
+	VALGRIND_MAKE_MEM_NOACCESS(ptr, 1);
+}
+
+static inline bool
+sentinel_ok(const void *base, Size offset)
+{
+	const char *ptr = (const char *)base + offset;
+	bool ret;
+
+	VALGRIND_MAKE_MEM_DEFINED(ptr, 1);
+	ret = *ptr == 0x7E;
+	VALGRIND_MAKE_MEM_NOACCESS(ptr, 1);
+
+	return ret;
+}
+
+#endif /* MEMORY_CONTEXT_CHECKING */
 
 #endif							/* MEMDEBUG_H */
