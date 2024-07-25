@@ -154,7 +154,7 @@ GetGlobalConnectionPool(void)
 static ConnectionPoolEntry *
 get_pool_entry_for_pool_id(int pool_id)
 {
-    if (pool_id < 0 || GPGetPoolEntriesCount())
+    if (pool_id < 0 || pool_id > GPGetPoolEntriesCount())
         return NULL;
     return &ConnectionPool[pool_id];
 }
@@ -448,7 +448,7 @@ GlobalPoolReleasePooledConnection(ConnectionPoolEntry *pool_entry, IPC_Endpoint 
 
     unregister_lease(pool_entry->pool_id, ipc_endpoint);
     ereport(LOG,
-            (errmsg("child:%d released pool_id:%d database:%s used:%s", ipc_endpoint->child_pid,
+            (errmsg("child:%d released pool_id:%d database:%s user:%s", ipc_endpoint->child_pid,
                     pool_entry->pool_id,
                     pool_entry->endPoint.database,
                     pool_entry->endPoint.user)));

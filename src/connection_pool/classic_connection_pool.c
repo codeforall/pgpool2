@@ -153,7 +153,7 @@ LPReleaseClusterConnection(bool discard)
     // }
 
     ereport(LOG,
-            (errmsg("child: released pool_id:%d database:%s used:%s",
+            (errmsg("child: released pool_id:%d database:%s user:%s",
                     pool_entry->pool_id,
                     pool_entry->endPoint.database,
                     pool_entry->endPoint.user)));

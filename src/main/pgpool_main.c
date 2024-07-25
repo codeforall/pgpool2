@@ -5311,10 +5311,9 @@ handle_child_ipc_requests(void)
 					if (ProcessChildRequestOnMain(&ipc_endpoints[i]) == false)
 						ereport(LOG, (errmsg("failed to process child:%d request on main",ipc_endpoints[i].child_pid)));
 
-					reads++;
+					if (reads++ >= select_ret)
+						break;
 				}
-			if (reads >= select_ret)
-				break;
 			}
 		}
 	}
