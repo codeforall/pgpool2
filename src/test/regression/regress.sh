@@ -23,6 +23,7 @@ fail=0
 ok=0
 timeout=0
 PGSOCKET_DIR=/tmp
+POOLING_MODE=classic
 
 CRED=$(tput setaf 1)
 CGREEN=$(tput setaf 2)
@@ -114,6 +115,7 @@ function export_env_vars
 	export PGSOCKET_DIR=$PGSOCKET_DIR
 	export PGVERSION=`$PGBIN/initdb -V|awk '{print $3}'|sed 's/\..*//'`
 	export LANG=C
+	export POOLING_MODE=$POOLING_MODE
 
 	export ENABLE_TEST=true
 }
@@ -128,6 +130,7 @@ function print_info
 	echo "PostgreSQL Major version : "${CBLUE}$PGVERSION${CNORM}
 	echo "pgbench                  : "${CBLUE}$PGBENCH_PATH${CNORM}
 	echo "PostgreSQL jdbc          : "${CBLUE}$JDBC_DRIVER${CNORM}
+	echo "Connection Pooling Mode  : "${CBLUE}$POOLING_MODE${CNORM}
 	echo ${CBLUE}"*************************"${CNORM}
 }
 
@@ -143,8 +146,10 @@ function print_usage
 	printf "  -j   FILE                Postgres jdbc jar file path\n" >&2
 	printf "  -s   DIRECTORY           unix socket directory\n" >&2
 	printf "  -t   TIMEOUT             timeout value for each test (sec)\n" >&2
+	printf "  -P   POOLING_MODE        pooling mode for pgpool [classic|global] Default:$POOLING_MODE\n" >&2
 	printf "  -c                       test pgpool using sample scripts and config files\n" >&2
 	printf "  -d                       start pgpool with debug option\n" >&2
+	printf "  -v                       enable verbose log messages for pgpool\n" >&2
 	printf "  -?                       print this help and then exit\n\n" >&2
 	printf "Please read the README for details on adding new tests\n" >&2
 
@@ -152,10 +157,11 @@ function print_usage
 
 trap "echo ; exit 0" SIGINT SIGQUIT
 
-while getopts "p:m:i:j:b:s:t:cd?" OPTION
+while getopts "P:p:m:i:j:b:s:t:cdv?" OPTION
 do
   case $OPTION in
     p)  PG_INSTALL_DIR="$OPTARG";;
+    P)  POOLING_MODE="$OPTARG";;
     m)  MODE="$OPTARG";;
     i)  PGPOOL_PATH="$OPTARG";;
     j)  JDBC_DRIVER="$OPTARG";;
@@ -163,6 +169,7 @@ do
     s)  PGSOCKET_DIR="$OPTARG";;
     t)  TIMEOUT="$OPTARG";;
     c)  export TEST_SAMPLES="true";;
+    v)  export POOL_VERBOSE_OUTPUT="true";;
     d)  export PGPOOLDEBUG="true";;
     ?)  print_usage
         exit 2;;
@@ -185,6 +192,10 @@ else
 	exit -1
 fi 
 
+if [ "$POOLING_MODE" != "global" ] && [ "$POOLING_MODE" != "classic" ]; then
+	echo $POOLING_MODE : Invalid pooling mode. Valid values are global/classic
+	exit -1
+fi
 verify_pginstallation
 export_env_vars
 print_info

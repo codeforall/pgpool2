@@ -2,6 +2,7 @@
 #include "pool_config.h"
 #include "connection_pool/connection_pool.h"
 #include "utils/elog.h"
+#include <arpa/inet.h>
 
 static const ConnectionPoolRoutine *activeConnectionPool = NULL;
 ConnectionPoolEntry *ConnectionPool = NULL;

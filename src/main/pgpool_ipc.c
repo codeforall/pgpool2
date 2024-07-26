@@ -227,6 +227,7 @@ bool
 SendBackendSocktesToMainPool(int parent_link, int count, int *sockets)
 {
     char type = IPC_PUSH_CONNECTION_TO_POOL;
+    Assert(processType == PT_CHILD);
     if (write(parent_link, &type, 1) != 1)
     {
         close(parent_link);
@@ -234,7 +235,11 @@ SendBackendSocktesToMainPool(int parent_link, int count, int *sockets)
                 (errmsg("failed to write IPC packet type:%c to parent:%d", type, parent_link)));
         return false;
     }
-    return TransferSocketsBetweenProcesses(parent_link, count, sockets);
+    if (TransferSocketsBetweenProcesses(parent_link, count, sockets) == false)
+        ereport(FATAL,
+                (errmsg("failed to push sockets to parent:%d", parent_link)));
+
+    return true;
 }
 
 bool
@@ -261,7 +266,7 @@ TransferSocketsBetweenProcesses(int process_link, int count, int *sockets)
     if (ancil_send_fds(process_link, sockets, count) == -1)
     {
         ereport(WARNING,
-                (errmsg("ancil_send_fds failed")));
+                (errmsg("ancil_send_fds failed %m")));
         return false;
     }
     return true;

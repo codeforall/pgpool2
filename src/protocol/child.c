@@ -418,7 +418,7 @@ do_child(int *fds, int ipc_fd)
 		 * frontend <--> pgpool and pgpool <--> backend.
 		 */
 		backend = get_backend_connection(child_frontend);
-		if (!backend)
+		if (!backend || !backend->sp)
 		{
 			if (pool_config->log_disconnections)
 				log_disconnections(child_frontend->database, child_frontend->username);

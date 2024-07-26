@@ -481,6 +481,10 @@ GlobalPoolChildProcessDied(int child_id, pid_t child_pid)
     }
 }
 
+/* If communication fails in this function.
+ * we will close the socket and hope child process
+ * will act sain
+*/
 bool
 GlobalPoolLeasePooledConnectionToChild(IPC_Endpoint *ipc_endpoint)
 {
@@ -490,8 +494,7 @@ GlobalPoolLeasePooledConnectionToChild(IPC_Endpoint *ipc_endpoint)
     int pool_id = -1;
     bool ret;
 
-    if (processType != PT_MAIN)
-        return false;
+    Assert (processType == PT_MAIN);
 
     if (ipc_endpoint->proc_info_id < 0 || ipc_endpoint->proc_info_id >= pool_config->num_init_children)
         return false;
@@ -531,6 +534,8 @@ GlobalPoolLeasePooledConnectionToChild(IPC_Endpoint *ipc_endpoint)
         ereport(LOG,
                 (errmsg("Failed to send (pool_id:%d) lease type:%d to child:%d", pool_id, lease_type, ipc_endpoint->child_pid)));
         unregister_lease(pool_id, ipc_endpoint);
+        close(ipc_endpoint->child_link);
+        ipc_endpoint->child_link = -1;
         return false;
     }
 
@@ -544,7 +549,11 @@ GlobalPoolLeasePooledConnectionToChild(IPC_Endpoint *ipc_endpoint)
             ret = TransferSocketsBetweenProcesses(ipc_endpoint->child_link, num_sockets, sockets);
             pfree(sockets);
             if (ret == false)
+            {
+                close(ipc_endpoint->child_link);
+                ipc_endpoint->child_link = -1;
                 unregister_lease(pool_id, ipc_endpoint);
+            }
             return ret;
         }
         else
@@ -682,13 +691,13 @@ register_new_lease(int pool_id, LEASE_TYPES lease_type, IPC_Endpoint *ipc_endpoi
     }
     if (pool_id < 0 || pool_id >= GPGetPoolEntriesCount())
     {
-        ereport(ERROR,
+        ereport(WARNING,
                 (errmsg("pool_id:%d is out of range", pool_id)));
         return false;
     }
     if (ConnectionPool[pool_id].child_pid > 0 && ConnectionPool[pool_id].child_pid != ipc_endpoint->child_pid)
     {
-        ereport(ERROR,
+        ereport(WARNING,
                 (errmsg("pool_id:%d is already leased to child:%d", pool_id, ConnectionPool[pool_id].child_pid)));
         return false;
     }

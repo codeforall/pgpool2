@@ -4438,7 +4438,7 @@ kill_failover_children(FAILOVER_CONTEXT *failover_context, int node_id)
 
 			if (pool_entry->status == POOL_ENTRY_EMPTY)
 				continue;
-			child_pid = pool_entry->child_id;
+			child_pid = pool_entry->child_pid;
 			child_id = pool_entry->child_id;
 			pooled_cluster_connection = &pool_entry->endPoint;
 

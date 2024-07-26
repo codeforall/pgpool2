@@ -897,10 +897,15 @@ function set_pgpool_conf {
 	echo "pcp_socket_dir = '$PGSOCKET_DIR'" >> $CONF
 	echo "logging_collector = off" >> $CONF
 	echo "log_line_prefix = '%m: %a pid %p: '" >> $CONF
+	echo "connection_pool_type = $POOLING_MODE" >> $CONF
 
 	if [ $ENABLE_TEST = "true" ];then
 	    echo "health_check_test = on" >> $CONF
 	fi
+	if [ $POOL_VERBOSE_OUTPUT = "true" ];then
+	    echo "log_error_verbosity = verbose" >> $CONF
+	fi
+
 }
 
 #-------------------------------------------
