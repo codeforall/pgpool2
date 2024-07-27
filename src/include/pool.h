@@ -477,7 +477,6 @@ extern volatile sig_atomic_t health_check_timer_expired;	/* non 0 if health chec
 															 * timer expired */
 extern int	my_proc_id;			/* process table id (!= UNIX's PID) */
 extern ProcessInfo * process_info;	/* shmem process information table */
-extern ConnectionInfo * con_info;	/* shmem connection info table */
 extern POOL_REQUEST_INFO * Req_info;
 extern volatile sig_atomic_t *InRecovery;
 extern volatile sig_atomic_t got_sighup;

@@ -310,7 +310,7 @@ process_discard_connection_request(IPC_Endpoint* ipc_endpoint)
                 (errmsg("failed to get process info for child:%d", ipc_endpoint->child_pid)));
         return false;
     }
-    pool_entry = GetConnectionPoolEntry(pro_info->pool_id);
+    pool_entry = GetConnectionPoolEntry(pro_info->pool_id, ipc_endpoint->proc_info_id);
     if (!pool_entry)
     {
         ereport(WARNING,
@@ -339,7 +339,7 @@ process_release_connection_request(IPC_Endpoint* ipc_endpoint)
                 (errmsg("failed to get process info for child:%d", ipc_endpoint->child_pid)));
         return false;
     }
-    pool_entry = GetConnectionPoolEntry(pro_info->pool_id);
+    pool_entry = GetConnectionPoolEntry(pro_info->pool_id, ipc_endpoint->proc_info_id);
     if (!pool_entry)
     {
         ereport(WARNING,
@@ -369,7 +369,7 @@ process_push_connection_to_pool(IPC_Endpoint* ipc_endpoint)
                 (errmsg("failed to get process info for child:%d", ipc_endpoint->child_pid)));
         return false;
     }
-    pool_entry = GetConnectionPoolEntry(pro_info->pool_id);
+    pool_entry = GetConnectionPoolEntry(pro_info->pool_id, ipc_endpoint->proc_info_id);
     if (!pool_entry)
     {
         ereport(WARNING,

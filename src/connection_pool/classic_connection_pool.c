@@ -88,6 +88,9 @@ LPBorrowClusterConnection(char *database, char *user, int major, int minor)
     /* set the pool_id*/
     res->pool_id = selected_pool ? selected_pool->pool_id : -1;
     res->selected_pool = selected_pool;
+    if (selected_pool)
+        ConnectionPoolRegisterNewLease(selected_pool, res->lease_type, my_proc_id, selected_pool->child_pid);
+
     return (BorrowConnectionRes*)res;
 }
 
@@ -140,6 +143,7 @@ LPReleaseClusterConnection(bool discard)
 
     if (!pool_entry)
         return false;
+    ConnectionPoolUnregisterLease(pool_entry, my_proc_id, pool_entry->child_pid);
 
     // if (pool_entry->child_pid != my_proc_id)
     // {
@@ -163,10 +167,6 @@ LPReleaseClusterConnection(bool discard)
         memset(&pool_entry->endPoint, 0, sizeof(PooledBackendClusterConnection));
     }
 
-    pool_entry->endPoint.client_disconnection_time = time(NULL);
-    pool_entry->endPoint.client_disconnection_count++;
-    pool_entry->last_returned_time = time(NULL);
-
     return true;
 }
 
@@ -187,6 +187,19 @@ LPReleaseChildConnectionPool(void)
 {
 }
 
+static ConnectionPoolEntry *
+ClassicConnectionPoolGetPoolEntry(int pool_id, int child_id)
+{
+    ConnectionPoolEntry *pool_entry;
+    Assert(child_id < pool_config->num_init_children);
+    Assert(pool_id < pool_config->max_pool_size);
+
+    if (ConnectionPool == NULL)
+        return NULL;
+    pool_entry = &ConnectionPool[child_id * pool_config->max_pool_size];
+    return &pool_entry[pool_id];
+}
+
 ConnectionPoolRoutine ClassicConnectionPoolRoutine = {
     .RequiredSharedMemSize = LPRequiredSharedMemSize,
     .InitializeConnectionPool = LPInitializeConnectionPool,
@@ -199,7 +212,8 @@ ConnectionPoolRoutine ClassicConnectionPoolRoutine = {
     .ReleaseChildConnectionPool = LPReleaseChildConnectionPool,
     .ClusterConnectionNeedPush = LPClusterConnectionNeedPush,
     .GetConnectionPoolInfo = LPGetConnectionPoolInfo,
-    .GetPoolEntriesCount = LPGetPoolEntriesCount
+    .GetPoolEntriesCount = LPGetPoolEntriesCount,
+    .GetConnectionPoolEntry = ClassicConnectionPoolGetPoolEntry,
     };
 
 const ConnectionPoolRoutine *

@@ -40,6 +40,7 @@ typedef struct PooledBackendClusterConnection
 
     time_t client_connection_time;
     time_t client_disconnection_time;
+    time_t create_time;
     bool client_connected;
     int client_connection_count;
     int client_disconnection_count;

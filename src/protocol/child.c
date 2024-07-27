@@ -480,7 +480,7 @@ do_child(int *fds, int ipc_fd)
 		pool_session_context_destroy();
 
 		/* Mark this connection pool is not connected from frontend */
-		// pool_coninfo_unset_frontend_connected();
+		pool_coninfo_unset_frontend_connected();
 		// update_pooled_connection_count();
 		accepted = 0;
 		connection_count_down();

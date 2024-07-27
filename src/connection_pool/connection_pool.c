@@ -3,6 +3,7 @@
 #include "connection_pool/connection_pool.h"
 #include "utils/elog.h"
 #include <arpa/inet.h>
+#include <time.h>
 
 static const ConnectionPoolRoutine *activeConnectionPool = NULL;
 ConnectionPoolEntry *ConnectionPool = NULL;
@@ -155,14 +156,73 @@ ClusterConnectionNeedPush(void)
     return activeConnectionPool->ClusterConnectionNeedPush();
 }
 
-ConnectionPoolEntry*
-GetConnectionPoolEntry(int pool_idx)
+ConnectionPoolEntry *
+GetConnectionPoolEntryAtIndex(int pool_idx)
 {
     Assert(activeConnectionPool);
     Assert(ConnectionPool);
     if (pool_idx < 0 || pool_idx >= GetPoolEntriesCount())
         return NULL;
     return &ConnectionPool[pool_idx];
+}
+
+ConnectionPoolEntry *
+GetConnectionPoolEntry(int pool_id, int child_id)
+{
+    Assert(activeConnectionPool);
+    Assert(ConnectionPool);
+    return activeConnectionPool->GetConnectionPoolEntry(pool_id, child_id);
+}
+
+bool
+ConnectionPoolUnregisterLease(ConnectionPoolEntry* pool_entry, int child_id, pid_t child_pid)
+{
+    ProcessInfo *child_proc_info;
+
+    Assert(child_id >= 0 && child_id < pool_config->num_init_children);
+    Assert(pool_entry);
+
+    if (pool_entry->child_pid > 0 && pool_entry->child_pid != child_pid)
+    {
+        ereport(LOG,
+                (errmsg("failed to free lease of pooled connection: pool_id:%d is leased to different child:%d", pool_entry->pool_id, pool_entry->child_pid)));
+        return false;
+    }
+
+    ereport(DEBUG1,
+            (errmsg("pool_id:%d, is released from child:%d", pool_entry->pool_id, child_pid)));
+
+    child_proc_info = &process_info[child_id];
+    child_proc_info->pool_id = -1;
+
+    pool_entry->endPoint.client_disconnection_time = time(NULL);
+    pool_entry->last_returned_time = time(NULL);
+    pool_entry->endPoint.client_disconnection_count++;
+
+    return true;
+}
+
+bool
+ConnectionPoolRegisterNewLease(ConnectionPoolEntry *pool_entry, LEASE_TYPES lease_type, int child_id, pid_t child_pid)
+{
+    ProcessInfo *child_proc_info;
+    Assert(pool_entry);
+    Assert(child_id >= 0 && child_id < pool_config->num_init_children);
+
+
+    child_proc_info = &process_info[child_id];
+    child_proc_info->pool_id = pool_entry->pool_id;
+
+    pool_entry->last_returned_time = 0;
+
+    if (pool_entry->status == POOL_ENTRY_CONNECTED)
+    {
+        pool_entry->leased_count++;
+        pool_entry->leased_time = time(NULL);
+    }
+    ereport(LOG,
+            (errmsg("pool_id:%d, leased to child:%d", pool_entry->pool_id, pool_entry->child_pid)));
+    return true;
 }
 
 /* Functions that work on any installed connection pool */

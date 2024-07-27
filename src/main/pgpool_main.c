@@ -227,13 +227,6 @@ static pid_t health_check_pids[MAX_NUM_BACKENDS];
  * Private copy of backend status
  */
 BACKEND_STATUS private_backend_status[MAX_NUM_BACKENDS];
-
-/*
- * shmem connection info table
- * this is a three dimension array. i.e.:
- * con_info[pool_config->num_init_children][pool_config->max_pool][MAX_NUM_BACKENDS]
- */
-ConnectionInfo *con_info;
 static int *fds = NULL;				/* listening file descriptors (UNIX socket,
 								 * inet domain sockets) */
 
@@ -376,7 +369,7 @@ PgpoolMain(bool discard_status, bool clear_memcache_oidmaps)
 
 	if (num_pcp_fds == 0)
 	{
-		ereport(LOG,
+		ereport(FATAL,
 			   (errmsg("could not create any PCP Unix-domain sockets")));
 	}
 
@@ -3063,7 +3056,6 @@ initialize_shared_mem_objects(bool clear_memcache_oidmaps)
 	size = 256;/* let us have some extra space */
 	size += MAXALIGN(sizeof(BackendDesc));
 	elog(DEBUG1, "BackendDesc: %zu bytes requested for shared memory", MAXALIGN(sizeof(BackendDesc)));
-	size += MAXALIGN(pool_coninfo_size());
 	size += MAXALIGN(pool_config->num_init_children * (sizeof(ProcessInfo)));
 	elog(DEBUG1, "ProcessInfo: num_init_children (%d) * sizeof(ProcessInfo) (%zu) = %zu bytes requested for shared memory",
 		 pool_config->num_init_children, sizeof(ProcessInfo), pool_config->num_init_children* sizeof(ProcessInfo));
@@ -3111,21 +3103,15 @@ initialize_shared_mem_objects(bool clear_memcache_oidmaps)
 	pfree(pool_config->backend_desc);
 	pool_config->backend_desc = backend_desc;
 
-	/* get the shared memory from main segment*/
-	// con_info = (ConnectionInfo *)pool_shared_memory_segment_get_chunk(pool_coninfo_size());
-
 	if (ConnectionPoolRequiredSharedMemSize() > 0)
 	{
 		void* shmem_loc = pool_shared_memory_segment_get_chunk(ConnectionPoolRequiredSharedMemSize());
 		InitializeConnectionPool(shmem_loc);
 	}
-	// 	ConnectionPool = (ConnectionPoolEntry *)pool_shared_memory_segment_get_chunk(ConnectionPoolRequiredSharedMemSize());
-	// init_global_connection_pool();
 
 	process_info = (ProcessInfo *)pool_shared_memory_segment_get_chunk(pool_config->num_init_children * (sizeof(ProcessInfo)));
 	for (i = 0; i < pool_config->num_init_children; i++)
 	{
-		process_info[i].connection_info = pool_coninfo(i, 0, 0);
 		process_info[i].pid = 0;
 	}
 
@@ -3844,7 +3830,7 @@ sync_backend_from_watchdog(void)
 
 			for (i = 0; i < GetPoolEntriesCount(); i++)
 			{
-				ConnectionPoolEntry *pool_entry = GetConnectionPoolEntry(i);
+				ConnectionPoolEntry *pool_entry = GetConnectionPoolEntryAtIndex(i);
 				PooledBackendClusterConnection *pooled_cluster_connection = NULL;
 				ProcessInfo *pi = NULL;
 				pid_t child_pid = -1;
@@ -3855,7 +3841,7 @@ sync_backend_from_watchdog(void)
 
 				if (pool_entry->status == POOL_ENTRY_EMPTY)
 					continue;
-				child_pid = pool_entry->child_id;
+				child_pid = pool_entry->child_pid;
 				child_id = pool_entry->child_id;
 				pooled_cluster_connection = &pool_entry->endPoint;
 
@@ -4428,7 +4414,7 @@ kill_failover_children(FAILOVER_CONTEXT *failover_context, int node_id)
 
 		for (i =0; i < GetPoolEntriesCount(); i++)
 		{
-			ConnectionPoolEntry *pool_entry = GetConnectionPoolEntry(i);
+			ConnectionPoolEntry *pool_entry = GetConnectionPoolEntryAtIndex(i);
 			PooledBackendClusterConnection* pooled_cluster_connection = NULL;
 			ProcessInfo *pi = NULL;
 			pid_t child_pid = -1;
@@ -4742,7 +4728,7 @@ exec_child_restart(FAILOVER_CONTEXT *failover_context, int node_id)
 			{
 				for (i = 0; i < GetPoolEntriesCount(); i++)
 				{
-					ConnectionPoolEntry *pool_entry = GetConnectionPoolEntry(i);
+					ConnectionPoolEntry *pool_entry = GetConnectionPoolEntryAtIndex(i);
 					PooledBackendClusterConnection *pooled_cluster_connection = NULL;
 					ProcessInfo *pi = NULL;
 					pid_t child_pid = -1;
@@ -4752,7 +4738,7 @@ exec_child_restart(FAILOVER_CONTEXT *failover_context, int node_id)
 
 					if (pool_entry->status == POOL_ENTRY_EMPTY)
 						continue;
-					child_pid = pool_entry->child_id;
+					child_pid = pool_entry->child_pid;
 					child_id = pool_entry->child_id;
 					pooled_cluster_connection = &pool_entry->endPoint;
 

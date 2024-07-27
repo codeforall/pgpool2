@@ -123,7 +123,15 @@ GPClusterConnectionNeedPush(void)
     return true;
 }
 
+static ConnectionPoolEntry *
+GlobalConnectionPoolGetPoolEntry(int pool_id, int child_id)
+{
+    Assert(pool_id < GPGetPoolEntriesCount());
 
+    if (ConnectionPool == NULL)
+        return NULL;
+    return &ConnectionPool[pool_id];
+}
 
 static void
 GPReleaseChildConnectionPool(void)
@@ -142,7 +150,8 @@ ConnectionPoolRoutine GlobalConnectionPoolRoutine = {
     .ReleaseChildConnectionPool = GPReleaseChildConnectionPool,
     .ClusterConnectionNeedPush = GPClusterConnectionNeedPush,
     .GetConnectionPoolInfo = GPGetConnectionPoolInfo,
-    .GetPoolEntriesCount = GPGetPoolEntriesCount
+    .GetPoolEntriesCount = GPGetPoolEntriesCount,
+    .GetConnectionPoolEntry = GlobalConnectionPoolGetPoolEntry
 };
 
 const ConnectionPoolRoutine*
@@ -352,7 +361,7 @@ export_local_cluster_connection_data_to_pool(void)
     sock_index = 0;
     for (i = 0; i < NUM_BACKENDS; i++)
     {
-        if (VALID_BACKEND(i))
+        if (VALID_BACKEND_RAW(i))
         {
             backend_end_point->conn_slots[i].key = current_backend_con->slots[i].key;
             backend_end_point->conn_slots[i].pid = current_backend_con->slots[i].pid;
@@ -645,6 +654,7 @@ static bool
 unregister_lease(int pool_id, IPC_Endpoint *ipc_endpoint)
 {
     ProcessInfo *child_proc_info;
+    ConnectionPoolEntry *pool_entry;
 
     if (processType != PT_MAIN)
     {
@@ -658,22 +668,24 @@ unregister_lease(int pool_id, IPC_Endpoint *ipc_endpoint)
                 (errmsg("pool_id:%d is out of range", pool_id)));
         return false;
     }
-    if (ConnectionPool[pool_id].child_pid > 0 && ConnectionPool[pool_id].child_pid != ipc_endpoint->child_pid)
+    pool_entry = &ConnectionPool[pool_id];
+
+    if (pool_entry->child_pid > 0 && pool_entry->child_pid != ipc_endpoint->child_pid)
     {
         ereport(ERROR,
-                (errmsg("pool_id:%d is leased to different child:%d", pool_id, ConnectionPool[pool_id].child_pid)));
+                (errmsg("pool_id:%d is leased to different child:%d", pool_id, pool_entry->child_pid)));
         return false;
     }
     child_proc_info = &process_info[ipc_endpoint->proc_info_id];
     child_proc_info->pool_id = -1;
 
     ereport(DEBUG1,
-            (errmsg("pool_id:%d, is released from child:%d", pool_id, ConnectionPool[pool_id].child_pid)));
+            (errmsg("pool_id:%d, is released from child:%d", pool_id, pool_entry->child_pid)));
 
-    ConnectionPool[pool_id].child_pid = -1;
-    ConnectionPool[pool_id].child_id = -1;
-    ConnectionPool[pool_id].endPoint.client_disconnection_time = time(NULL);
-    ConnectionPool[pool_id].endPoint.client_disconnection_count++;
+    ConnectionPoolUnregisterLease(pool_entry, ipc_endpoint->proc_info_id, ipc_endpoint->child_pid);
+
+    pool_entry->child_pid = -1;
+    pool_entry->child_id = -1;
 
     return true;
 }
@@ -682,6 +694,7 @@ static bool
 register_new_lease(int pool_id, LEASE_TYPES lease_type, IPC_Endpoint *ipc_endpoint)
 {
     ProcessInfo *child_proc_info;
+    ConnectionPoolEntry * pool_entry;
 
     if (processType != PT_MAIN)
     {
@@ -695,23 +708,19 @@ register_new_lease(int pool_id, LEASE_TYPES lease_type, IPC_Endpoint *ipc_endpoi
                 (errmsg("pool_id:%d is out of range", pool_id)));
         return false;
     }
-    if (ConnectionPool[pool_id].child_pid > 0 && ConnectionPool[pool_id].child_pid != ipc_endpoint->child_pid)
+    pool_entry = &ConnectionPool[pool_id];
+
+    if (pool_entry->child_pid > 0 && pool_entry->child_pid != ipc_endpoint->child_pid)
     {
         ereport(WARNING,
-                (errmsg("pool_id:%d is already leased to child:%d", pool_id, ConnectionPool[pool_id].child_pid)));
+                (errmsg("pool_id:%d is already leased to child:%d", pool_id, pool_entry->child_pid)));
         return false;
     }
 
-    ConnectionPool[pool_id].child_pid = ipc_endpoint->child_pid;
-    ConnectionPool[pool_id].child_id = ipc_endpoint->proc_info_id;
-    child_proc_info = &process_info[ipc_endpoint->proc_info_id];
-    child_proc_info->pool_id = pool_id;
-    if (ConnectionPool[pool_id].status == POOL_ENTRY_CONNECTED)
-    {
-        ConnectionPool[pool_id].leased_count++;
-        ConnectionPool[pool_id].leased_time = time(NULL);
-    }
+    ConnectionPoolRegisterNewLease(pool_entry, lease_type, ipc_endpoint->proc_info_id, ipc_endpoint->child_pid);
+    pool_entry->child_pid = ipc_endpoint->child_pid;
+    pool_entry->child_id = ipc_endpoint->proc_info_id;
     ereport(LOG,
-            (errmsg("pool_id:%d, leased to child:%d", pool_id, ConnectionPool[pool_id].child_pid)));
+            (errmsg("pool_id:%d, leased to child:%d", pool_id, pool_entry->child_pid)));
     return true;
 }

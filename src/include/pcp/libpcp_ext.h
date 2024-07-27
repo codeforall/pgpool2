@@ -176,8 +176,6 @@ typedef struct
 	time_t		start_time;		/* fork() time */
 	char		connected;		/* if not 0 this process is already used*/
 	int			wait_for_connect;	/* waiting time for client connection (s) */
-	ConnectionInfo *connection_info;	/* head of the connection info for
-										 * this process */
 	int			client_connection_count;	/* how many times clients used this process */
 	ProcessStatus	status;
 	bool		need_to_restart;	/* If non 0, exit this child process as

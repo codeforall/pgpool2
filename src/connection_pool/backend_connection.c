@@ -204,7 +204,7 @@ bool ConnectBackendClusterSockets(void)
                 (errmsg("creating new connection to backend"),
                  errdetail("connecting %d backend", i)));
 
-        if (!VALID_BACKEND(i))
+        if (!VALID_BACKEND_RAW(i))
         {
             ereport(DEBUG1,
                     (errmsg("creating new connection to backend"),

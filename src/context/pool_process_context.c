@@ -103,63 +103,6 @@ pool_increment_local_session_id(void)
 }
 
 /*
- * Return byte size of connection info(ConnectionInfo) on shmem.
- */
-size_t
-pool_coninfo_size(void)
-{
-	size_t			size;
-
-	size = pool_config->num_init_children *
-		pool_config->max_pool *
-		MAX_NUM_BACKENDS *
-		sizeof(ConnectionInfo);
-
-	ereport(DEBUG1,
-			(errmsg("pool_coninfo_size: num_init_children (%d) * max_pool (%d) * MAX_NUM_BACKENDS (%d) * sizeof(ConnectionInfo) (%zu) = %zu bytes requested for shared memory",
-					pool_config->num_init_children,
-					pool_config->max_pool,
-					MAX_NUM_BACKENDS,
-					sizeof(ConnectionInfo),
-					size)));
-	return size;
-}
-
-
-/*
- * Return pointer to i th child, j th connection pool and k th backend
- * of connection info on shmem.
- */
-ConnectionInfo *
-pool_coninfo(int child, int connection_pool, int backend)
-{
-	if (child < 0 || child >= pool_config->num_init_children)
-	{
-		ereport(WARNING,
-				(errmsg("failed to get connection info, invalid child number: %d", child)));
-		return NULL;
-	}
-
-	if (connection_pool < 0 || connection_pool >= pool_config->max_pool)
-	{
-		ereport(WARNING,
-				(errmsg("failed to get connection info, invalid connection pool number: %d", connection_pool)));
-		return NULL;
-	}
-
-	if (backend < 0 || backend >= MAX_NUM_BACKENDS)
-	{
-		ereport(WARNING,
-				(errmsg("failed to get connection info, invalid backend number: %d", backend)));
-		return NULL;
-	}
-
-	return &con_info[child * pool_config->max_pool * MAX_NUM_BACKENDS +
-					 connection_pool * MAX_NUM_BACKENDS +
-					 backend];
-}
-
-/*
  * sets the flag to mark that the connection will be terminated by the
  * backend and it should not be considered as a backend node failure.
  * This flag is used to handle pg_terminate_backend()
