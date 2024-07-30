@@ -118,6 +118,8 @@ GPClusterConnectionNeedPush(void)
     ConnectionPoolEntry *pool_entry = get_pool_entry_for_pool_id(child_connection->pool_id);
     if (!pool_entry)
         return false;
+    if (child_connection->need_push_back)
+        return true;
     if (pool_entry->status == POOL_ENTRY_CONNECTED && child_connection->lease_type == LEASE_TYPE_READY_TO_USE)
         return false;
     return true;
@@ -188,16 +190,21 @@ get_sockets_array(PooledBackendClusterConnection *backend_endpoint, int **socket
         {
             // if (backend_endpoint->conn_slots[sock_index].socket > 0)
             socks[i] = backend_endpoint->conn_slots[sock_index].socket;
+            ereport(DEBUG1,
+            (errmsg("Adding pooled node:%d socket:%d at sock_index:%d with backend_status:%d sockets to push list", i, socks[i], sock_index, backend_endpoint->backend_status[sock_index])));
         }
         else
         {
             BackendClusterConnection *current_backend_con = GetBackendClusterConnection();
             socks[i] = current_backend_con->slots[sock_index].con->fd;
+            ereport(DEBUG1,
+                    (errmsg("Adding node:%d socket:%d at sock_index:%d with backend_status:%d child_backend_status:%d sockets to push list", i, socks[i], sock_index,
+                            current_backend_con->backend_end_point->backend_status[sock_index], *(my_backend_status[sock_index]))));
         }
     }
 
     *sockets = socks;
-    ereport(DEBUG2, (errmsg("we have %d %s sockets to push", *num_sockets, pooled_socks ? "pooled" : "child")));
+    ereport(DEBUG1, (errmsg("we have %d %s sockets to push", *num_sockets, pooled_socks ? "pooled" : "child")));
     return *num_sockets;
 }
 
@@ -245,7 +252,16 @@ import_pooled_connection_into_child(int pool_id, int *sockets, LEASE_TYPES lease
              */
             close(sockets[i]);
             backend_end_point->conn_slots[slot_no].socket = -1;
-            backend_end_point->backend_status[i] = BACKEND_INFO(slot_no).backend_status;
+            backend_end_point->backend_status[slot_no] = BACKEND_INFO(slot_no).backend_status;
+            continue;
+        }
+
+        if (backend_end_point->conn_slots[slot_no].need_reconnect)
+        {
+            close(sockets[i]);
+            backend_end_point->conn_slots[slot_no].socket = -1;
+            backend_end_point->backend_status[slot_no] = CON_DOWN;
+            backend_end_point->conn_slots[slot_no].need_reconnect = false;
             continue;
         }
 
@@ -257,7 +273,10 @@ import_pooled_connection_into_child(int pool_id, int *sockets, LEASE_TYPES lease
         current_backend_con->slots[slot_no].state = CONNECTION_SLOT_LOADED_FROM_BACKEND;
     }
 
-    /* Now take care of backends that were attached after the pool was created */
+    /* Now take care of backends that were attached after the pool was created
+     * and adjust the status of backend end point to reflect the new reality */
+
+    backend_end_point->num_sockets = 0;
 
     for (i = 0; i < NUM_BACKENDS; i++)
     {
@@ -281,16 +300,20 @@ import_pooled_connection_into_child(int pool_id, int *sockets, LEASE_TYPES lease
                 }
                 else
                 {
+                    /* Connection was successfull */
                     ereport(LOG, (errmsg("Backend %d was down when pool was created. Sock successfully connected:%d", i,
                                          current_backend_con->slots[i].state)));
                     *(my_backend_status[i]) = CON_UP;
-
-                    /* Connection was successfull */
                 }
+                backend_end_point->backend_status[i] = *(my_backend_status[i]);
+                current_backend_con->need_push_back = true;
             }
         }
         else
             *(my_backend_status[i]) = BACKEND_INFO(i).backend_status;
+        /* Also adjust the socket array and count in backend end point */
+        if (backend_end_point->backend_status[i] == CON_UP)
+            backend_end_point->backend_ids[backend_end_point->num_sockets++] = i;
     }
     return true;
 }
@@ -365,6 +388,7 @@ export_local_cluster_connection_data_to_pool(void)
         {
             backend_end_point->conn_slots[i].key = current_backend_con->slots[i].key;
             backend_end_point->conn_slots[i].pid = current_backend_con->slots[i].pid;
+            backend_end_point->backend_status[i] = CON_UP;
             backend_end_point->backend_ids[sock_index++] = i;
         }
         else
@@ -372,6 +396,7 @@ export_local_cluster_connection_data_to_pool(void)
             backend_end_point->conn_slots[i].key = -1;
             backend_end_point->conn_slots[i].pid = -1;
             backend_end_point->conn_slots[i].socket = -1;
+            backend_end_point->backend_status[i] = *(my_backend_status[i]);
         }
     }
     backend_end_point->num_sockets = sock_index;

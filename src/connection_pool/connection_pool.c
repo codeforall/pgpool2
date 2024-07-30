@@ -4,6 +4,7 @@
 #include "utils/elog.h"
 #include <arpa/inet.h>
 #include <time.h>
+#include <string.h>
 
 static const ConnectionPoolRoutine *activeConnectionPool = NULL;
 ConnectionPoolEntry *ConnectionPool = NULL;
@@ -221,7 +222,7 @@ ConnectionPoolRegisterNewLease(ConnectionPoolEntry *pool_entry, LEASE_TYPES leas
         pool_entry->leased_time = time(NULL);
     }
     ereport(LOG,
-            (errmsg("pool_id:%d, leased to child:%d", pool_entry->pool_id, pool_entry->child_pid)));
+            (errmsg("pool_id:%d, leased to child:[ID:%d, PID:%d]", pool_entry->pool_id, child_id, child_pid)));
     return true;
 }
 
@@ -303,4 +304,47 @@ get_backend_node_connection_for_backend_pid(int backend_pid, int *backend_node_i
         }
     }
     return NULL;
+}
+
+int
+InvalidateAllPooledConnections(char *database)
+{
+    int i;
+    int count = 0;
+    Assert(ConnectionPool);
+
+    for (i = 0; i < GetPoolEntriesCount(); i++)
+    {
+        if (ConnectionPool[i].status == POOL_ENTRY_EMPTY)
+            continue;
+        if (!database || strcmp(ConnectionPool[i].endPoint.database, database) == 0)
+        {
+            ConnectionPool[i].need_cleanup = true;
+            count++;
+        }
+    }
+    return count;
+}
+
+
+int
+InvalidateNodeInPooledConnections(int node_id)
+{
+    int i;
+    int count = 0;
+    Assert(ConnectionPool);
+
+    for (i = 0; i < GetPoolEntriesCount(); i++)
+    {
+        if (ConnectionPool[i].status == POOL_ENTRY_EMPTY)
+            continue;
+        if (ConnectionPool[i].endPoint.conn_slots[node_id].socket > 0)
+        {
+            ereport(DEBUG1,
+                    (errmsg("InvalidateNodeInPooledConnections: node_id:%d for pool-entry:%d need reconnection", node_id,i)));
+            ConnectionPool[i].endPoint.conn_slots[node_id].need_reconnect = true;
+            count++;
+        }
+    }
+    return count;
 }

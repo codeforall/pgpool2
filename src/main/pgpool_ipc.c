@@ -263,6 +263,8 @@ ReleasePooledConnectionFromChild(int parent_link, bool discard)
 bool
 TransferSocketsBetweenProcesses(int process_link, int count, int *sockets)
 {
+    ereport(DEBUG1,
+            (errmsg("Sending %d sockets through socket-descriptor:%d", count, process_link)));
     if (ancil_send_fds(process_link, sockets, count) == -1)
     {
         ereport(WARNING,
@@ -281,6 +283,33 @@ process_borrow__connection_request(IPC_Endpoint* ipc_endpoint)
 static bool
 receive_sockets(int fd, int count, int *sockets)
 {
+    #define MAX_WAIT_FOR_FDS_RECV 2
+    fd_set rmask;
+    int ret;
+    struct timeval timeout;
+    timeout.tv_sec = MAX_WAIT_FOR_FDS_RECV;
+    timeout.tv_usec = 0;
+
+    FD_ZERO(&rmask);
+    FD_SET(fd, &rmask);
+    /* we could have called recv too early while sender would still be
+     * preparing the socket list.
+     * So we need to wait for data to be available
+     */
+    ret = select(fd + 1, &rmask, NULL, NULL, &timeout);
+    if (ret == 0)
+    {
+        ereport(WARNING,
+                (errmsg("Timeout while waiting for sockets from fd:%d", fd)));
+        return false;
+    }
+    else if (ret == -1)
+    {
+        ereport(WARNING,
+                (errmsg("select failed while waiting for sockets from fd:%d", fd),
+                    errdetail("%m")));
+        return false;
+    }
     if (ancil_recv_fds(fd, sockets, count) == -1)
     {
         ereport(WARNING,

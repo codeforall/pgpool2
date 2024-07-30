@@ -201,8 +201,9 @@ static int exec_follow_primary_command(FAILOVER_CONTEXT *failover_context, int n
 static void save_node_info(FAILOVER_CONTEXT *failover_context, int new_primary_node_id, int new_main_node_id);
 static void exec_child_restart(FAILOVER_CONTEXT *failover_context, int node_id);
 static void exec_notice_pcp_child(FAILOVER_CONTEXT *failover_context);
+static void conform_children_to_node_failure(int failed_node_id, bool need_total_reset, bool prepare_only);
 
-static void check_requests(void);
+	static void check_requests(void);
 static void print_signal_member(sigset_t *sig);
 static void service_child_processes(void);
 static bool handle_child_ipc_requests(void);
@@ -3827,66 +3828,15 @@ sync_backend_from_watchdog(void)
 	{
 		if (partial_restart)
 		{
-
-			for (i = 0; i < GetPoolEntriesCount(); i++)
+			for (i = 0; i < down_node_ids_index; i++)
 			{
-				ConnectionPoolEntry *pool_entry = GetConnectionPoolEntryAtIndex(i);
-				PooledBackendClusterConnection *pooled_cluster_connection = NULL;
-				ProcessInfo *pi = NULL;
-				pid_t child_pid = -1;
-				int child_id;
-				int idx;
-
-				Assert(pool_entry);
-
-				if (pool_entry->status == POOL_ENTRY_EMPTY)
-					continue;
-				child_pid = pool_entry->child_pid;
-				child_id = pool_entry->child_id;
-				pooled_cluster_connection = &pool_entry->endPoint;
-
-				Assert(child_id < pool_config->num_init_children);
-				for (idx = 0; idx < down_node_ids_index; idx++)
-				{
-					int node_id = down_node_ids[idx];
-
-					/*
-						* If this pool entry is not leased to any child process
-						* we just need to mark this enrry needs cleanup
-						*/
-					if (pooled_cluster_connection->conn_slots[node_id].connected)
-						pooled_cluster_connection->conn_slots[node_id].need_reconnect = true;
-
-					if (child_pid < 0)
-						continue;
-					/*
-						* So the pool entry is leased, check if it is using the failed node.
-						*/
-
-					pi = &process_info[pool_entry->child_id];
-					Assert(pi->pid == child_pid);
-
-					if (pooled_cluster_connection->load_balancing_node == node_id)
-					{
-						ereport(LOG,
-								(errmsg("child pid %d needs to restart because pool %d uses backend %d",
-										child_pid, pool_entry->pool_id, node_id)));
-						kill(child_pid, SIGQUIT); /* TODO: do not quit. Tell child to take appropriate action. */
-					}
-				}
+				int node_id = down_node_ids[i];
+				conform_children_to_node_failure(node_id, false, false);
 			}
 		}
 		else
 		{
-			/*
-				* Set restart request to each child. Children will exit(1) whenever
-				* they are convenient.
-				*/
-			for (i = 0; i < pool_config->num_init_children; i++)
-			{
-				if (process_info[i].pid)
-					process_info[i].need_to_restart = 1;
-			}
+			conform_children_to_node_failure(0, true, false);
 		}
 	}
 
@@ -4320,6 +4270,97 @@ handle_failover_request(FAILOVER_CONTEXT *failover_context, int node_id)
 	return 0;
 }
 
+static void
+conform_children_to_node_failure(int failed_node_id, bool need_total_reset, bool prepare_only)
+{
+	int i;
+	ProcessInfo* pi;
+	int max_respawn_children = pool_config->num_init_children;
+	if (pool_config->process_management == PM_DYNAMIC)
+	{
+		/* We only need to spawn max_spare_child number of processes*/
+		max_respawn_children = pool_config->max_spare_children;
+	}
+
+	if (need_total_reset)
+	{
+		/* We need to restart all child process. This could be the case
+			* when primary node fails
+			*/
+		ereport(LOG,
+				(errmsg("conform_children_to_node_failure: total reset requested for node id: %d", failed_node_id)));
+		/*
+		 * if we are using global connection pool, we also need to invalidate
+		 * all pooled connections
+		 */
+		InvalidateAllPooledConnections(NULL);
+		for (i =0; i < pool_config->num_init_children; i++)
+		{
+			ProcessInfo *pi = &process_info[i];
+			if (pi->pid > 0)
+			{
+				child_process_exits(i, pi->pid);
+				kill(pi->pid, SIGQUIT);
+				if (prepare_only)
+					continue;
+				if (max_respawn_children > 0)
+				{
+					pi->pid = fork_a_child(fds, i);
+					pi->start_time = time(NULL);
+					pi->client_connection_count = 0;
+					pi->status = WAIT_FOR_CONNECT;
+					pi->connected = 0;
+					pi->wait_for_connect = 0;
+					pi->pooled_connections = 0;
+					max_respawn_children --;
+				}
+				else
+					pi->pid = 0;
+			}
+		}
+		return;
+	}
+	else
+	{
+		ereport(LOG,
+				(errmsg("conform_children_to_node_failure: partial reset requested for node id: %d", failed_node_id)));
+		InvalidateNodeInPooledConnections(failed_node_id);
+		for (i = 0; i < pool_config->num_init_children; i++)
+		{
+			ProcessInfo* pi = &process_info[i];
+			ConnectionPoolEntry* pool_entry = GetConnectionPoolEntry(pi->pool_id, i);
+			if (pool_entry && pool_entry->endPoint.client_connected)
+			{
+				/* So the child process has an active connection
+				 * See if it is also using the failed node
+				 */
+				if (pool_entry->endPoint.load_balancing_node == failed_node_id)
+				{
+					ereport(LOG,
+							(errmsg("conform_children_to_node_failure: child pid %d needs to restart because pool %d uses backend %d",
+									pi->pid, pi->pool_id, failed_node_id)));
+					child_process_exits(i, pi->pid);
+					kill(pi->pid, SIGQUIT);
+					if (prepare_only)
+						continue;
+					if (max_respawn_children > 0)
+					{
+						pi->pid = fork_a_child(fds, i);
+						pi->start_time = time(NULL);
+						pi->client_connection_count = 0;
+						pi->status = WAIT_FOR_CONNECT;
+						pi->connected = 0;
+						pi->wait_for_connect = 0;
+						pi->pooled_connections = 0;
+						max_respawn_children --;
+					}
+					else
+						pi->pid = 0;
+				}
+			}
+		}
+	}
+}
 /*
  * Kill child process to prepare failover/failback.
  */
@@ -4412,74 +4453,15 @@ kill_failover_children(FAILOVER_CONTEXT *failover_context, int node_id)
 		 * gloabl pool
 		 */
 
-		for (i =0; i < GetPoolEntriesCount(); i++)
-		{
-			ConnectionPoolEntry *pool_entry = GetConnectionPoolEntryAtIndex(i);
-			PooledBackendClusterConnection* pooled_cluster_connection = NULL;
-			ProcessInfo *pi = NULL;
-			pid_t child_pid = -1;
-			int child_id;
-
-			Assert(pool_entry);
-
-			if (pool_entry->status == POOL_ENTRY_EMPTY)
-				continue;
-			child_pid = pool_entry->child_pid;
-			child_id = pool_entry->child_id;
-			pooled_cluster_connection = &pool_entry->endPoint;
-
-			Assert(child_id < pool_config->num_init_children);
-
-			/*
-			 * If this pool entry is not leased to any child process
-			 * we just need to mark this enrry needs cleanup
-			 */
-			if (pooled_cluster_connection->conn_slots[node_id].connected)
-				pooled_cluster_connection->conn_slots[node_id].need_reconnect = true;
-
-			if (child_pid < 0)
-				continue;
-			/*
-			 * So the pool entry is leased, check if it is using the failed node.
-			 */
-
-			pi = &process_info[pool_entry->child_id];
-			Assert(pi->pid == child_pid);
-			
-			if (pooled_cluster_connection->load_balancing_node == node_id)
-			{
-				ereport(LOG,
-						(errmsg("child pid %d needs to restart because pool %d uses backend %d",
-								child_pid, pool_entry->pool_id , node_id)));
-				kill(child_pid, SIGQUIT); /* TODO: do not quit. Tell child to take appropriate action. */
-			}
-		}
+		conform_children_to_node_failure(node_id, false, true);
 	}
 	else
 	{
-		ereport(LOG,
-				(errmsg("Restart all children")));
-
-		/*
-		 * kill all children
-		 * Since global connection pool we only need to kill the children that have a leased pool connection
-		 */
-		for (i = 0; i < pool_config->num_init_children; i++)
-		{
-			pid_t		pid = process_info[i].pid;
-
-			if (pid)
-			{
-				kill(pid, SIGQUIT);
-				ereport(DEBUG1,
-						(errmsg("failover handler"),
-						 errdetail("kill process with PID:%d", pid)));
-			}
-		}
-
 		failover_context->need_to_restart_children = true;
 		failover_context->partial_restart = false;
+		conform_children_to_node_failure(node_id, false, true);
 	}
+	
 }
 
 /*
@@ -4709,91 +4691,18 @@ exec_child_restart(FAILOVER_CONTEXT *failover_context, int node_id)
 
 	if (failover_context->need_to_restart_children)
 	{
-		for (i = 0; i < pool_config->num_init_children; i++)
-		{
-			/*
-			 * Try to kill pgpool child because previous kill signal may
-			 * not be received by pgpool child. This could happen if
-			 * multiple PostgreSQL are going down (or even starting
-			 * pgpool, without starting PostgreSQL can trigger this).
-			 * Child calls degenerate_backend() and it tries to acquire
-			 * semaphore to write a failover request. In this case the
-			 * signal mask is set as well, thus signals are never
-			 * received.
-			 */
-
-			bool		restart = false;
-
-			if (failover_context->partial_restart)
-			{
-				for (i = 0; i < GetPoolEntriesCount(); i++)
-				{
-					ConnectionPoolEntry *pool_entry = GetConnectionPoolEntryAtIndex(i);
-					PooledBackendClusterConnection *pooled_cluster_connection = NULL;
-					ProcessInfo *pi = NULL;
-					pid_t child_pid = -1;
-					int child_id;
-
-					Assert(pool_entry);
-
-					if (pool_entry->status == POOL_ENTRY_EMPTY)
-						continue;
-					child_pid = pool_entry->child_pid;
-					child_id = pool_entry->child_id;
-					pooled_cluster_connection = &pool_entry->endPoint;
-
-					Assert(child_id < pool_config->num_init_children);
-
-					/*
-					 * If this pool entry is not leased to any child process
-					 * we just need to mark this enrry needs cleanup
-					 */
-					if (pooled_cluster_connection->conn_slots[node_id].connected)
-						pooled_cluster_connection->conn_slots[node_id].need_reconnect = true;
-
-					if (child_pid < 0)
-						continue;
-					/*
-					 * So the pool entry is leased, check if it is using the failed node.
-					 */
-
-					pi = &process_info[pool_entry->child_id];
-					Assert(pi->pid == child_pid);
-
-					if (pooled_cluster_connection->load_balancing_node == node_id)
-					{
-						ereport(LOG,
-								(errmsg("child pid %d needs to restart because pool %d uses backend %d",
-										child_pid, pool_entry->pool_id, node_id)));
-						kill(child_pid, SIGQUIT); /* TODO: do not quit. Tell child to take appropriate action. */
-					}
-				}
-			}
-			else
-				restart = true;
-
-			if (restart)
-			{
-				if (process_info[i].pid)
-				{
-					child_process_exits(i, process_info[i].pid);
-					kill(process_info[i].pid, SIGQUIT);
-
-					process_info[i].pid = fork_a_child(fds, i);
-					process_info[i].start_time = time(NULL);
-					process_info[i].client_connection_count = 0;
-					process_info[i].status = WAIT_FOR_CONNECT;
-					process_info[i].connected = 0;
-					process_info[i].wait_for_connect = 0;
-					process_info[i].pooled_connections = 0;
-
-				}
-			}
-			else
-				process_info[i].need_to_restart = 1;
-		}
+		/*
+		 * Try to kill pgpool child because previous kill signal may
+		 * not be received by pgpool child. This could happen if
+		 * multiple PostgreSQL are going down (or even starting
+		 * pgpool, without starting PostgreSQL can trigger this).
+		 * Child calls degenerate_backend() and it tries to acquire
+		 * semaphore to write a failover request. In this case the
+		 * signal mask is set as well, thus signals are never
+		 * received.
+		 */
+		conform_children_to_node_failure(node_id, !failover_context->partial_restart, false);
 	}
-
 	else
 	{
 		/*

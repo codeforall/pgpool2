@@ -172,7 +172,7 @@ typedef struct BackendClusterConnection
     LEASE_TYPES lease_type;             /* lease type */
     PooledBackendClusterConnection *backend_end_point; /* Reference to global pool end point in shared mem */
     int pool_id;                        /* global pool id */
-    // bool need_push_back;                /* true if this connection needs to be pushed back to global pool */
+    bool need_push_back;                /* true if this connection needs to be pushed back to global pool */
     BackendNodeConnection slots[MAX_NUM_BACKENDS];
 } BackendClusterConnection;
 

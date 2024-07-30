@@ -77,6 +77,9 @@ extern ConnectionPoolEntry *GetConnectionPoolEntry(int pool_id, int child_id);
 extern bool ConnectionPoolRegisterNewLease(ConnectionPoolEntry *pool_entry, LEASE_TYPES lease_type, int child_id, pid_t child_pid);
 extern bool ConnectionPoolUnregisterLease(ConnectionPoolEntry* pool_entry, int child_id, pid_t child_pid);
 
+extern int InvalidateAllPooledConnections(char *database);
+extern int InvalidateNodeInPooledConnections(int node_id);
+
 /* from global_connection_pool.c */
 extern const ConnectionPoolRoutine *GetGlobalConnectionPool(void);
 extern bool InstallSocketsInConnectionPool(ConnectionPoolEntry *pool_entry, int *sockets);

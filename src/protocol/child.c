@@ -2034,6 +2034,7 @@ retry_startup:
 		pool_get_my_process_info()->need_to_restart = 0;
 		close_idle_connection(0);
 		pool_initialize_private_backend_status();
+		/* Re-Adjust the backend node connections */
 	}
 	/* Ask for a connection from main process */
 	for(;;)
