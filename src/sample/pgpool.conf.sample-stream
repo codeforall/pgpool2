@@ -204,8 +204,14 @@ backend_clustering_mode = 'streaming_replication'
                                    # Maximum number of idle child processes waiting for connection
                                    # (Only applicable for dynamic process management mode)
 
+#max_pool = 4
+                                   # Number of connection pool caches per connection
+                                   # only valid for connection_pool_type = classic
+                                   # (change requires restart)
+
 #max_pool_size = 32
-                                   # Maximum number of connection pool caches
+                                   # Maximum number of global connection pool caches
+                                   # only valid for connection_pool_type = global
                                    # (change requires restart)
 
 #pool_availability_timeout = 5

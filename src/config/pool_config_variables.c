@@ -2075,7 +2075,7 @@ static struct config_int ConfigureNamesInt[] =
 
 	{
 		{"max_pool_size", CFGCXT_INIT, CONNECTION_POOL_CONFIG,
-			"Maximum number of connection pools.",
+			"Maximum number of global connection pools.",
 			CONFIG_VAR_TYPE_INT, false, 0
 		},
 		&g_pool_config.max_pool_size,

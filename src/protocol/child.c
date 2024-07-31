@@ -1305,6 +1305,7 @@ child_will_go_down(int code, Datum arg)
 				(errmsg("child_exit: called from invalid process. ignored.")));
 		return;
 	}
+	ReleaseChildConnectionPool();
 	/* Close IPC Con */
 	if (parent_link_fd != -1)
 		close(parent_link_fd);
@@ -1330,7 +1331,7 @@ child_will_go_down(int code, Datum arg)
 
 	/* let backend know now we are exiting */
 	// if (pool_connection_pool)
-		close_all_backend_connections();
+	//	close_all_backend_connections();
 }
 
 /*

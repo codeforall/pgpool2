@@ -367,6 +367,16 @@ get_config(int *nrows)
 	StrNCpy(status[i].desc, "max # of connection pool per child", POOLCONFIG_MAXDESCLEN);
 	i++;
 
+	StrNCpy(status[i].name, "max_pool_size", POOLCONFIG_MAXNAMELEN);
+	snprintf(status[i].value, POOLCONFIG_MAXVALLEN, "%d", pool_config->max_pool_size);
+	StrNCpy(status[i].desc, "max # of global connection pools", POOLCONFIG_MAXDESCLEN);
+	i++;
+
+	StrNCpy(status[i].name, "connection_pool_type", POOLCONFIG_MAXNAMELEN);
+	snprintf(status[i].value, POOLCONFIG_MAXVALLEN, "%d", pool_config->connection_pool_type);
+	StrNCpy(status[i].desc, "connection pool type", POOLCONFIG_MAXDESCLEN);
+	i++;
+
 	StrNCpy(status[i].name, "process_management_mode", POOLCONFIG_MAXNAMELEN);
 	snprintf(status[i].value, POOLCONFIG_MAXVALLEN, "%d", pool_config->process_management);
 	StrNCpy(status[i].desc, "process management mode", POOLCONFIG_MAXDESCLEN);
@@ -1735,7 +1745,6 @@ get_processes(int *nrows)
 {
 	int			child = 0;
 	int			child_id;
-	int			pool;
 	ProcessInfo *pi = NULL;
 	int			proc_id;
 

@@ -138,6 +138,9 @@ GlobalConnectionPoolGetPoolEntry(int pool_id, int child_id)
 static void
 GPReleaseChildConnectionPool(void)
 {
+    /* Just discard the currently pooled connection */
+    ReleasePooledConnectionFromChild(ParentLinkFd, true);
+    
 }
 
 ConnectionPoolRoutine GlobalConnectionPoolRoutine = {

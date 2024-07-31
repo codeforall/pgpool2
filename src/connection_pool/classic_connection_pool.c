@@ -34,10 +34,11 @@ static LEASE_TYPES pool_get_cp(char *user, char *database, int protoMajor, bool 
 static ConnectionPoolEntry *get_pool_entry_to_discard(void);
 static void discard_cp(void);
 static void clear_pooled_cluster_connection(PooledBackendClusterConnection *backend_end_point);
+static void close_all_pooled_connections(void);
 
 static int classic_connection_pool_entry_count(void)
 {
-    return pool_config->max_pool_size * pool_config->num_init_children;
+    return pool_config->max_pool * pool_config->num_init_children;
 }
 static const char *
 LPGetConnectionPoolInfo(void)
@@ -100,9 +101,9 @@ LPLoadChildConnectionPool(int int_arg)
     int i;
     int child_id = my_proc_id;
     Assert(child_id < pool_config->num_init_children);
-    firstChildConnectionPool = &ConnectionPool[child_id * pool_config->max_pool_size];
+    firstChildConnectionPool = &ConnectionPool[child_id * pool_config->max_pool];
     elog(DEBUG2, "LoadChildConnectionPool: child_id:%d first id=%d", child_id, firstChildConnectionPool->pool_id);
-    for (i = 0; i < pool_config->max_pool_size; i++)
+    for (i = 0; i < pool_config->max_pool; i++)
     {
         firstChildConnectionPool[i].status = POOL_ENTRY_EMPTY;
         firstChildConnectionPool[i].child_id = child_id;
@@ -143,6 +144,7 @@ LPReleaseClusterConnection(bool discard)
 
     if (!pool_entry)
         return false;
+
     ConnectionPoolUnregisterLease(pool_entry, my_proc_id, pool_entry->child_pid);
 
     // if (pool_entry->child_pid != my_proc_id)
@@ -185,6 +187,7 @@ LPClusterConnectionNeedPush(void)
 static void
 LPReleaseChildConnectionPool(void)
 {
+    close_all_pooled_connections();
 }
 
 static ConnectionPoolEntry *
@@ -192,11 +195,11 @@ ClassicConnectionPoolGetPoolEntry(int pool_id, int child_id)
 {
     ConnectionPoolEntry *pool_entry;
     Assert(child_id < pool_config->num_init_children);
-    Assert(pool_id < pool_config->max_pool_size);
+    Assert(pool_id < pool_config->max_pool);
 
     if (ConnectionPool == NULL)
         return NULL;
-    pool_entry = &ConnectionPool[child_id * pool_config->max_pool_size];
+    pool_entry = &ConnectionPool[child_id * pool_config->max_pool];
     return &pool_entry[pool_id];
 }
 
@@ -225,7 +228,7 @@ GetClassicConnectionPool(void)
 static ConnectionPoolEntry *
 get_pool_entry_for_pool_id(int pool_id)
 {
-    if (pool_id < 0 || pool_id >= pool_config->max_pool_size)
+    if (pool_id < 0 || pool_id >= pool_config->max_pool)
         return NULL;
     return &firstChildConnectionPool[pool_id];
 }
@@ -545,4 +548,50 @@ clear_pooled_cluster_connection(PooledBackendClusterConnection *backend_end_poin
 {
     memset(&backend_end_point->conn_slots, 0, sizeof(PooledBackendNodeConnection) * MAX_NUM_BACKENDS);
     backend_end_point->num_sockets = 0;
+}
+
+/*
+ * Disconnect to all backend connections.  this is called
+ * in any case when child process exits, for example failover, child
+ * life time expires or child max connections expires.
+ */
+
+static void
+close_all_pooled_connections(void)
+{
+    int pool;
+    int current_pool_id = -1;
+    ConnectionPoolEntry *connection_pool = firstChildConnectionPool;
+    BackendClusterConnection *current_backend_con;
+
+    Assert(processType == PT_CHILD);
+    if (!connection_pool)
+        return;
+
+    current_backend_con = GetBackendClusterConnection();
+    current_pool_id = current_backend_con->pool_id;
+    pool_send_frontend_exits(current_backend_con);
+
+    for (pool = 0; pool < pool_config->max_pool; pool++)
+    {
+        int i;
+        ConnectionPoolEntry *pool_entry = &connection_pool[pool];
+        PooledBackendClusterConnection *endPoint = &pool_entry->endPoint;
+        if (pool_entry->status == POOL_ENTRY_EMPTY)
+            continue;
+        if (current_pool_id != pool)
+        {
+            for (i = 0; i < NUM_BACKENDS; i++)
+            {
+                if (endPoint->conn_slots[i].socket > 0)
+                {
+                    close(endPoint->conn_slots[i].socket);
+                    endPoint->conn_slots[i].socket = -1;
+                }
+            }
+        }
+        memset(&pool_entry->endPoint, 0, sizeof(PooledBackendClusterConnection));
+        pool_entry->status = POOL_ENTRY_EMPTY;
+    }
+    ResetBackendClusterConnection();
 }
