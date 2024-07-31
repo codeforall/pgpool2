@@ -569,6 +569,7 @@ PgpoolMain(bool discard_status, bool clear_memcache_oidmaps)
 		process_info[i].pooled_connections = 0;
 		process_info[i].need_to_restart = false;
 		process_info[i].exit_if_idle = false;
+		process_info[i].pool_id = -1;
 		process_info[i].pid = fork_a_child(fds, i);
 	}
 
@@ -3114,6 +3115,7 @@ initialize_shared_mem_objects(bool clear_memcache_oidmaps)
 	for (i = 0; i < pool_config->num_init_children; i++)
 	{
 		process_info[i].pid = 0;
+		process_info[i].pool_id = -1;
 	}
 
 	user1SignalSlot = (User1SignalSlot *)pool_shared_memory_segment_get_chunk(sizeof(User1SignalSlot));
@@ -5230,6 +5232,7 @@ child_process_exits(int child_id, pid_t child_pid)
 		/* Close the ipc endpoint for the exited child */
 		if (ipc_endpoints[child_id].child_link > 0)
 			close(ipc_endpoints[child_id].child_link);
+		process_info[child_id].pool_id = -1;
 		ipc_endpoints[child_id].child_link = -1;
 		ipc_endpoints[child_id].child_pid = 0;
 		ipc_endpoints[child_id].proc_info_id = -1;
