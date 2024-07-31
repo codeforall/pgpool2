@@ -5123,7 +5123,8 @@ service_child_processes(void)
 static int
 select_victim_processes(int *process_info_idxs, int count)
 {
-	int i;
+	int i, ki;
+	bool found_enough = false;
 	int selected_count = 0;
 
 	if (count <= 0)
@@ -5135,10 +5136,35 @@ select_victim_processes(int *process_info_idxs, int count)
 		if (process_info[i].pid && process_info[i].status == WAIT_FOR_CONNECT)
 		{
 			if (selected_count < count)
+			{
 				process_info_idxs[selected_count++] = i;
+			}
 			else
-				break;
+			{
+				found_enough = true;
+				/* we don't bother selecting the child having least pooled connection with
+				 * aggressive strategy
+				 */
+				if (pool_config->process_management_strategy != PM_STRATEGY_AGGRESSIVE 
+				&& pool_config->connection_pool_type != GLOBAL_CONNECTION_POOL )
+				{
+					for (ki = 0; ki < count; ki++)
+					{
+						int old_index = process_info_idxs[ki];
+						if (old_index < 0 || process_info[old_index].pooled_connections > process_info[i].pooled_connections)
+						{
+							process_info_idxs[ki] = i;
+							found_enough = false;
+							break;
+						}
+						if (process_info[old_index].pooled_connections)
+							found_enough = false;
+					}
+				}
+			}
 		}
+		if (found_enough)
+			break;
 	}
 	return selected_count;
 }

@@ -149,6 +149,14 @@ GetBackendEndPointForCancelPacket(CancelPacket *cp)
     return get_backend_connection_for_cancel_packer(cp);
 }
 
+void
+UpdatePooledConnectionCount(void)
+{
+    Assert(activeConnectionPool);
+    Assert(processType == PT_CHILD);
+    activeConnectionPool->UpdatePooledConnectionCount();
+}
+
 bool
 ClusterConnectionNeedPush(void)
 {

@@ -203,6 +203,28 @@ ClassicConnectionPoolGetPoolEntry(int pool_id, int child_id)
     return &pool_entry[pool_id];
 }
 
+static void
+LPUpdatePooledConnectionCount(void)
+{
+    int pool;
+    int count = 0;
+    ConnectionPoolEntry *connection_pool = firstChildConnectionPool;
+
+    Assert(processType == PT_CHILD);
+    if (!connection_pool)
+        return;
+
+    for (pool = 0; pool < pool_config->max_pool; pool++)
+    {
+        int i;
+        ConnectionPoolEntry *pool_entry = &connection_pool[pool];
+        PooledBackendClusterConnection *endPoint = &pool_entry->endPoint;
+        if (pool_entry->status != POOL_ENTRY_EMPTY)
+            count++;
+    }
+    pool_get_my_process_info()->pooled_connections = count;
+}
+
 ConnectionPoolRoutine ClassicConnectionPoolRoutine = {
     .RequiredSharedMemSize = LPRequiredSharedMemSize,
     .InitializeConnectionPool = LPInitializeConnectionPool,
@@ -217,6 +239,7 @@ ConnectionPoolRoutine ClassicConnectionPoolRoutine = {
     .GetConnectionPoolInfo = LPGetConnectionPoolInfo,
     .GetPoolEntriesCount = LPGetPoolEntriesCount,
     .GetConnectionPoolEntry = ClassicConnectionPoolGetPoolEntry,
+    .UpdatePooledConnectionCount = LPUpdatePooledConnectionCount
     };
 
 const ConnectionPoolRoutine *

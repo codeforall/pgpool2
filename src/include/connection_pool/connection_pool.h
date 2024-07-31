@@ -52,6 +52,7 @@ typedef struct ConnectionPoolRoutine
     PooledBackendClusterConnection* (*GetBackendEndPointForCancelPacket) (CancelPacket *cp); /* optional overload */
     bool (*ClusterConnectionNeedPush)(void);
     const char *(*GetConnectionPoolInfo)(void);
+    void (*UpdatePooledConnectionCount)(void);
     int (*GetPoolEntriesCount)(void);
     ConnectionPoolEntry *(*GetConnectionPoolEntry)(int pool_idx, int child_id);
 } ConnectionPoolRoutine;
@@ -73,6 +74,7 @@ extern PooledBackendNodeConnection *GetBackendNodeConnectionForBackendPID(int ba
 extern PooledBackendClusterConnection *GetBackendEndPointForCancelPacket(CancelPacket *cp);
 extern ConnectionPoolEntry *GetConnectionPoolEntryAtIndex(int pool_idx);
 extern ConnectionPoolEntry *GetConnectionPoolEntry(int pool_id, int child_id);
+extern void UpdatePooledConnectionCount(void);
 
 extern bool ConnectionPoolRegisterNewLease(ConnectionPoolEntry *pool_entry, LEASE_TYPES lease_type, int child_id, pid_t child_pid);
 extern bool ConnectionPoolUnregisterLease(ConnectionPoolEntry* pool_entry, int child_id, pid_t child_pid);

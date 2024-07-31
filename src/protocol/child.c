@@ -304,7 +304,7 @@ do_child(int *fds, int ipc_fd)
 			pool_close(child_frontend, true);
 			child_frontend = NULL;
 		}
-		// update_pooled_connection_count();
+		UpdatePooledConnectionCount();
 		MemoryContextSwitchTo(TopMemoryContext);
 		FlushErrorState();
 	}
@@ -481,7 +481,7 @@ do_child(int *fds, int ipc_fd)
 
 		/* Mark this connection pool is not connected from frontend */
 		pool_coninfo_unset_frontend_connected();
-		// update_pooled_connection_count();
+		UpdatePooledConnectionCount();
 		accepted = 0;
 		connection_count_down();
 		if (pool_config->log_disconnections)

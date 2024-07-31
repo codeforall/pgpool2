@@ -143,6 +143,22 @@ GPReleaseChildConnectionPool(void)
     
 }
 
+static void
+GPUpdatePooledConnectionCount(void)
+{
+    int pool;
+    int current_pool_id = -1;
+    BackendClusterConnection *current_backend_con;
+
+    Assert(processType == PT_CHILD);
+
+    current_backend_con = GetBackendClusterConnection();
+    if (current_backend_con->pool_id < 0)
+        pool_get_my_process_info()->pooled_connections = 1;
+    else
+        pool_get_my_process_info()->pooled_connections = 0;
+}
+
 ConnectionPoolRoutine GlobalConnectionPoolRoutine = {
     .RequiredSharedMemSize = GPRequiredSharedMemSize,
     .InitializeConnectionPool = GPInitializeConnectionPool,
@@ -156,7 +172,8 @@ ConnectionPoolRoutine GlobalConnectionPoolRoutine = {
     .ClusterConnectionNeedPush = GPClusterConnectionNeedPush,
     .GetConnectionPoolInfo = GPGetConnectionPoolInfo,
     .GetPoolEntriesCount = GPGetPoolEntriesCount,
-    .GetConnectionPoolEntry = GlobalConnectionPoolGetPoolEntry
+    .GetConnectionPoolEntry = GlobalConnectionPoolGetPoolEntry,
+    .UpdatePooledConnectionCount = GPUpdatePooledConnectionCount
 };
 
 const ConnectionPoolRoutine*

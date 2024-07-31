@@ -41,7 +41,6 @@ extern int	connect_unix_domain_socket_by_port(int port, char *socket_dir, bool r
 
 extern int	pool_pool_index(void);
 extern void close_all_backend_connections(void);
-extern void update_pooled_connection_count(void);
 extern int	in_use_backend_id(BackendClusterConnection *pool);
 
 
