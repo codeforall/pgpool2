@@ -4897,6 +4897,14 @@ config_post_processor(ConfigContext context, int elevel)
 		strcpy(g_pool_config.wd_nodes.wd_node_info[g_pool_config.pgpool_node_id].hostname, localhostname);
 		return true;
 	}
+
+	if (g_pool_config.connection_cache == false && g_pool_config.connection_pool_type == GLOBAL_CONNECTION_POOL)
+	{
+		ereport(elevel,
+				(errmsg("invalid configuration, connection_cache should be enabled when connection_pool_type is set to global")));
+		return false;
+	}
+
 	for (i = 0; i < MAX_CONNECTION_SLOTS; i++)
 	{
 		BackendInfo *backend_info = &g_pool_config.backend_desc->backend_info[i];
