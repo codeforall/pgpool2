@@ -52,6 +52,9 @@ MemoryContext CacheMemoryContext = NULL;
 MemoryContext MessageContext = NULL;
 MemoryContext QueryContext = NULL;
 
+#ifdef USE_ASSERT_CHECKING
+int CritSectionCount = 0;
+#endif
 
 static void MemoryContextCallResetCallbacks(MemoryContext context);
 static void MemoryContextStatsInternal(MemoryContext context, int level,

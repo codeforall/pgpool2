@@ -43,7 +43,10 @@
 #include <stdlib.h>
 
 #include "pool.h"
+#include "connection_pool/connection_pool.h"
+#include "main/pgpool_ipc.h"
 #include "context/pool_query_context.h"
+#include "context/pool_session_context.h"
 #include "utils/pool_stream.h"
 #include "utils/palloc.h"
 #include "pool_config.h"
@@ -57,308 +60,26 @@
 
 #include "context/pool_process_context.h"
 
+int parent_link = -1;
 static int	pool_index;			/* Active pool index */
-POOL_CONNECTION_POOL *pool_connection_pool; /* connection pool */
+// BackendClusterConnection child_backend_connection;
+
 volatile sig_atomic_t backend_timer_expired = 0;	/* flag for connection
 													 * closed timer is expired */
 volatile sig_atomic_t health_check_timer_expired;	/* non 0 if health check
 													 * timer expired */
-static POOL_CONNECTION_POOL_SLOT * create_cp(POOL_CONNECTION_POOL_SLOT * cp, int slot);
-static POOL_CONNECTION_POOL * new_connection(POOL_CONNECTION_POOL * p);
-static int	check_socket_status(int fd);
 static bool connect_with_timeout(int fd, struct addrinfo *walk, char *host, int port, bool retry);
 
 #define TMINTMAX 0x7fffffff
 
 /*
-* initialize connection pools. this should be called once at the startup.
-*/
-int
-pool_init_cp(void)
-{
-	int			i;
-	MemoryContext oldContext = MemoryContextSwitchTo(TopMemoryContext);
-
-	pool_connection_pool = (POOL_CONNECTION_POOL *) palloc(sizeof(POOL_CONNECTION_POOL) * pool_config->max_pool);
-	memset(pool_connection_pool, 0, sizeof(POOL_CONNECTION_POOL) * pool_config->max_pool);
-
-	for (i = 0; i < pool_config->max_pool; i++)
-	{
-		pool_connection_pool[i].info = pool_coninfo(pool_get_process_context()->proc_id, i, 0);
-		memset(pool_connection_pool[i].info, 0, sizeof(ConnectionInfo) * MAX_NUM_BACKENDS);
-	}
-	MemoryContextSwitchTo(oldContext);
-	return 0;
-}
-
-/*
-* find connection by user and database
-*/
-POOL_CONNECTION_POOL *
-pool_get_cp(char *user, char *database, int protoMajor, int check_socket)
-{
-	pool_sigset_t oldmask;
-
-	int			i,
-				freed = 0;
-	ConnectionInfo *info;
-
-	POOL_CONNECTION_POOL *connection_pool = pool_connection_pool;
-
-	if (connection_pool == NULL)
-	{
-		/* if no connection pool exists we have no reason to live */
-		ereport(ERROR,
-				(return_code(2),
-				 errmsg("unable to get connection"),
-				 errdetail("connection pool is not initialized")));
-	}
-
-	POOL_SETMASK2(&BlockSig, &oldmask);
-
-	for (i = 0; i < pool_config->max_pool; i++)
-	{
-		if (MAIN_CONNECTION(connection_pool) &&
-			MAIN_CONNECTION(connection_pool)->sp &&
-			MAIN_CONNECTION(connection_pool)->sp->major == protoMajor &&
-			MAIN_CONNECTION(connection_pool)->sp->user != NULL &&
-			strcmp(MAIN_CONNECTION(connection_pool)->sp->user, user) == 0 &&
-			strcmp(MAIN_CONNECTION(connection_pool)->sp->database, database) == 0)
-		{
-			int			sock_broken = 0;
-			int			j;
-
-			/* mark this connection is under use */
-			MAIN_CONNECTION(connection_pool)->closetime = 0;
-			for (j = 0; j < NUM_BACKENDS; j++)
-			{
-				connection_pool->info[j].counter++;
-			}
-			POOL_SETMASK(&oldmask);
-
-			if (check_socket)
-			{
-				for (j = 0; j < NUM_BACKENDS; j++)
-				{
-					if (!VALID_BACKEND(j))
-						continue;
-
-					if (CONNECTION_SLOT(connection_pool, j))
-					{
-						sock_broken = check_socket_status(CONNECTION(connection_pool, j)->fd);
-						if (sock_broken < 0)
-							break;
-					}
-					else
-					{
-						sock_broken = -1;
-						break;
-					}
-				}
-
-				if (sock_broken < 0)
-				{
-					ereport(LOG,
-							(errmsg("connection closed."),
-							 errdetail("retry to create new connection pool")));
-					/*
-					 * It is possible that one of backend just broke.  sleep 1
-					 * second to wait for failover occurres, then wait for the
-					 * failover finishes.
-					 */
-					sleep(1);
-					wait_for_failover_to_finish();
-
-					for (j = 0; j < NUM_BACKENDS; j++)
-					{
-						if (!VALID_BACKEND(j) || (CONNECTION_SLOT(connection_pool, j) == NULL))
-							continue;
-
-						if (!freed)
-						{
-							pool_free_startup_packet(CONNECTION_SLOT(connection_pool, j)->sp);
-							CONNECTION_SLOT(connection_pool, j)->sp = NULL;
-
-							freed = 1;
-						}
-
-						pool_close(CONNECTION(connection_pool, j));
-						pfree(CONNECTION_SLOT(connection_pool, j));
-					}
-					info = connection_pool->info;
-					memset(connection_pool, 0, sizeof(POOL_CONNECTION_POOL));
-					connection_pool->info = info;
-					info->swallow_termination = 0;
-					memset(connection_pool->info, 0, sizeof(ConnectionInfo) * MAX_NUM_BACKENDS);
-					POOL_SETMASK(&oldmask);
-					return NULL;
-				}
-			}
-			POOL_SETMASK(&oldmask);
-			pool_index = i;
-			return connection_pool;
-		}
-		connection_pool++;
-	}
-
-	POOL_SETMASK(&oldmask);
-	return NULL;
-}
-
-/*
- * disconnect and release a connection to the database
- */
-void
-pool_discard_cp(char *user, char *database, int protoMajor)
-{
-	POOL_CONNECTION_POOL *p = pool_get_cp(user, database, protoMajor, 0);
-	ConnectionInfo *info;
-	int			i,
-				freed = 0;
-
-	if (p == NULL)
-	{
-		ereport(LOG,
-				(errmsg("cannot get connection pool for user: \"%s\" database: \"%s\", while discarding connection pool", user, database)));
-		return;
-	}
-
-	for (i = 0; i < NUM_BACKENDS; i++)
-	{
-		if (!VALID_BACKEND(i))
-			continue;
-
-		if (!freed)
-		{
-			pool_free_startup_packet(CONNECTION_SLOT(p, i)->sp);
-			freed = 1;
-		}
-		CONNECTION_SLOT(p, i)->sp = NULL;
-		pool_close(CONNECTION(p, i));
-		pfree(CONNECTION_SLOT(p, i));
-	}
-
-	info = p->info;
-	memset(p, 0, sizeof(POOL_CONNECTION_POOL));
-	p->info = info;
-	memset(p->info, 0, sizeof(ConnectionInfo) * MAX_NUM_BACKENDS);
-}
-
-
-/*
-* create a connection pool by user and database
-*/
-POOL_CONNECTION_POOL *
-pool_create_cp(void)
-{
-	int			i,
-				freed = 0;
-	time_t		closetime;
-	POOL_CONNECTION_POOL *oldestp;
-	POOL_CONNECTION_POOL *ret;
-	ConnectionInfo *info;
-	int		main_node_id;
-
-	POOL_CONNECTION_POOL *p = pool_connection_pool;
-
-	/* if no connection pool exists we have no reason to live */
-	if (p == NULL)
-		ereport(ERROR,
-				(return_code(2),
-				 errmsg("unable to create connection"),
-				 errdetail("connection pool is not initialized")));
-
-	for (i = 0; i < pool_config->max_pool; i++)
-	{
-		if (in_use_backend_id(p) < 0)	/* is this connection pool out of use? */
-		{
-			ret = new_connection(p);
-			if (ret)
-				pool_index = i;
-			return ret;
-		}
-		p++;
-	}
-	ereport(DEBUG1,
-			(errmsg("creating connection pool"),
-			 errdetail("no empty connection slot was found")));
-
-	/*
-	 * no empty connection slot was found. look for the oldest connection and
-	 * discard it.
-	 */
-	oldestp = p = pool_connection_pool;
-	closetime = TMINTMAX;
-	pool_index = 0;
-
-	for (i = 0; i < pool_config->max_pool; i++)
-	{
-		main_node_id = in_use_backend_id(p);
-		if (main_node_id < 0)
-			elog(ERROR, "no in use backend found");	/* this should not happen */
-
-		ereport(DEBUG1,
-				(errmsg("creating connection pool"),
-				 errdetail("user: %s database: %s closetime: %ld",
-						   CONNECTION_SLOT(p, main_node_id)->sp->user,
-						   CONNECTION_SLOT(p, main_node_id)->sp->database,
-						   CONNECTION_SLOT(p, main_node_id)->closetime)));
-
-		if (CONNECTION_SLOT(p, main_node_id)->closetime < closetime)
-		{
-			closetime = CONNECTION_SLOT(p, main_node_id)->closetime;
-			oldestp = p;
-			pool_index = i;
-		}
-		p++;
-	}
-
-	p = oldestp;
-	main_node_id = in_use_backend_id(p);
-	if (main_node_id < 0)
-		elog(ERROR, "no in use backend found");	/* this should not happen */
-	pool_send_frontend_exits(p);
-
-	ereport(DEBUG1,
-			(errmsg("creating connection pool"),
-			 errdetail("discarding old %zd th connection. user: %s database: %s",
-					   oldestp - pool_connection_pool,
-					   CONNECTION_SLOT(p, main_node_id)->sp->user,
-					   CONNECTION_SLOT(p, main_node_id)->sp->database)));
-
-	for (i = 0; i < NUM_BACKENDS; i++)
-	{
-		if (CONNECTION_SLOT(p, i) == NULL)
-			continue;
-
-		if (!freed)
-		{
-			pool_free_startup_packet(CONNECTION_SLOT(p, i)->sp);
-			CONNECTION_SLOT(p, i)->sp = NULL;
-
-			freed = 1;
-		}
-
-		pool_close(CONNECTION(p, i));
-		pfree(CONNECTION_SLOT(p, i));
-	}
-
-	info = p->info;
-	memset(p, 0, sizeof(POOL_CONNECTION_POOL));
-	p->info = info;
-	memset(p->info, 0, sizeof(ConnectionInfo) * MAX_NUM_BACKENDS);
-
-	ret = new_connection(p);
-	return ret;
-}
-
-/*
  * set backend connection close timer
  */
 void
-pool_connection_pool_timer(POOL_CONNECTION_POOL * backend)
+pool_connection_pool_timer(BackendClusterConnection * backend)
 {
-	POOL_CONNECTION_POOL *p = pool_connection_pool;
+	#ifdef NOT_USED
+	BackendClusterConnection *p = pool_connection_pool;
 	int			i;
 
 	ereport(DEBUG1,
@@ -395,6 +116,7 @@ pool_connection_pool_timer(POOL_CONNECTION_POOL * backend)
 			 errdetail("setting alarm after %d seconds", pool_config->connection_life_time)));
 
 	pool_alarm(pool_backend_timer_handler, pool_config->connection_life_time);
+	#endif
 }
 
 /*
@@ -409,7 +131,9 @@ pool_backend_timer_handler(int sig)
 void
 pool_backend_timer(void)
 {
-	POOL_CONNECTION_POOL *p = pool_connection_pool;
+#define TMINTMAX 0x7fffffff
+#ifdef UN_USED
+	BackendClusterConnection *p = pool_connection_pool;
 	int			i,
 				j;
 	time_t		now;
@@ -466,7 +190,7 @@ pool_backend_timer(void)
 					pfree(CONNECTION_SLOT(p, j));
 				}
 				info = p->info;
-				memset(p, 0, sizeof(POOL_CONNECTION_POOL));
+				memset(p, 0, sizeof(BackendClusterConnection));
 				p->info = info;
 				memset(p->info, 0, sizeof(ConnectionInfo) * MAX_NUM_BACKENDS);
 			}
@@ -487,8 +211,9 @@ pool_backend_timer(void)
 			nearest = 1;
 		pool_alarm(pool_backend_timer_handler, nearest);
 	}
-	update_pooled_connection_count();
+	UpdatePooledConnectionCount();
 	POOL_SETMASK(&UnBlockSig);
+#endif
 }
 
 /*
@@ -848,212 +573,6 @@ connect_inet_domain_socket_by_port(char *host, int port, bool retry)
 	return -1;
 }
 
-/*
- * create connection pool
- */
-static POOL_CONNECTION_POOL_SLOT * create_cp(POOL_CONNECTION_POOL_SLOT * cp, int slot)
-{
-	BackendInfo *b = &pool_config->backend_desc->backend_info[slot];
-	int			fd;
-
-	if (*b->backend_hostname == '/')
-	{
-		fd = connect_unix_domain_socket(slot, TRUE);
-	}
-	else
-	{
-		fd = connect_inet_domain_socket(slot, TRUE);
-	}
-
-	if (fd < 0)
-		return NULL;
-
-	cp->sp = NULL;
-	cp->con = pool_open(fd, true);
-	cp->closetime = 0;
-	return cp;
-}
-
-/*
- * Create actual connections to backends.
- * New connection resides in TopMemoryContext.
- */
-static POOL_CONNECTION_POOL * new_connection(POOL_CONNECTION_POOL * p)
-{
-	POOL_CONNECTION_POOL_SLOT *s;
-	int			active_backend_count = 0;
-	int			i;
-	bool		status_changed = false;
-	volatile BACKEND_STATUS	status;
-
-	MemoryContext oldContext = MemoryContextSwitchTo(TopMemoryContext);
-
-	for (i = 0; i < NUM_BACKENDS; i++)
-	{
-		ereport(DEBUG1,
-				(errmsg("creating new connection to backend"),
-				 errdetail("connecting %d backend", i)));
-
-		if (!VALID_BACKEND(i))
-		{
-			ereport(DEBUG1,
-					(errmsg("creating new connection to backend"),
-					 errdetail("skipping backend slot %d because backend_status = %d",
-							   i, BACKEND_INFO(i).backend_status)));
-			continue;
-		}
-
-		/*
-		 * Make sure that the global backend status in the shared memory
-		 * agrees the local status checked by VALID_BACKEND. It is possible
-		 * that the local status is up, while the global status has been
-		 * changed to down by failover.
-		 */
-		status = BACKEND_INFO(i).backend_status;
-		if (status != CON_UP && status != CON_CONNECT_WAIT)
-		{
-			ereport(DEBUG1,
-					(errmsg("creating new connection to backend"),
-					 errdetail("skipping backend slot %d because global backend_status = %d",
-							   i, BACKEND_INFO(i).backend_status)));
-
-			/* sync local status with global status */
-			*(my_backend_status[i]) = status;
-			my_main_node_id = Req_info->main_node_id;
-			continue;
-		}
-
-		s = palloc(sizeof(POOL_CONNECTION_POOL_SLOT));
-
-		if (create_cp(s, i) == NULL)
-		{
-			pfree(s);
-
-			/*
-			 * If failover_on_backend_error is true, do failover. Otherwise,
-			 * just exit this session or skip next health node.
-			 */
-			if (pool_config->failover_on_backend_error)
-			{
-				notice_backend_error(i, REQ_DETAIL_SWITCHOVER);
-				ereport(FATAL,
-						(errmsg("failed to create a backend connection"),
-						 errdetail("executing failover on backend")));
-			}
-			else
-			{
-				/*
-				 * If we are in streaming replication mode and the node is a
-				 * standby node, then we skip this node to avoid fail over.
-				 */
-				if (SL_MODE && !IS_PRIMARY_NODE_ID(i))
-				{
-					ereport(LOG,
-							(errmsg("failed to create a backend %d connection", i),
-							 errdetail("skip this backend because because failover_on_backend_error is off and we are in streaming replication mode and node is standby node")));
-
-					/* set down status to local status area */
-					*(my_backend_status[i]) = CON_DOWN;
-
-					/* if main_node_id is not updated, then update it */
-					if (Req_info->main_node_id == i)
-					{
-						int			old_main = Req_info->main_node_id;
-
-						Req_info->main_node_id = get_next_main_node();
-
-						ereport(LOG,
-								(errmsg("main node %d is down. Update main node to %d",
-										old_main, Req_info->main_node_id)));
-					}
-
-					/*
-					 * make sure that we need to restart the process after
-					 * finishing this session
-					 */
-					pool_get_my_process_info()->need_to_restart = 1;
-					continue;
-				}
-				else
-				{
-					ereport(FATAL,
-							(errmsg("failed to create a backend %d connection", i),
-							 errdetail("not executing failover because failover_on_backend_error is off")));
-				}
-			}
-			child_exit(POOL_EXIT_AND_RESTART);
-		}
-		else
-		{
-			p->info[i].create_time = time(NULL);
-			p->info[i].client_idle_duration = 0;
-			p->slots[i] = s;
-
-			pool_init_params(&s->con->params);
-
-			if (BACKEND_INFO(i).backend_status != CON_UP)
-			{
-				BACKEND_INFO(i).backend_status = CON_UP;
-				pool_set_backend_status_changed_time(i);
-				status_changed = true;
-			}
-			active_backend_count++;
-		}
-	}
-
-	if (status_changed)
-		(void) write_status_file();
-
-	MemoryContextSwitchTo(oldContext);
-
-	if (active_backend_count > 0)
-	{
-		return p;
-	}
-
-	return NULL;
-}
-
-/* check_socket_status()
- * RETURN: 0 => OK
- *        -1 => broken socket.
- */
-static int
-check_socket_status(int fd)
-{
-	fd_set		rfds;
-	int			result;
-	struct timeval t;
-
-	for (;;)
-	{
-		FD_ZERO(&rfds);
-		FD_SET(fd, &rfds);
-
-		t.tv_sec = t.tv_usec = 0;
-
-		result = select(fd + 1, &rfds, NULL, NULL, &t);
-		if (result < 0 && errno == EINTR)
-		{
-			continue;
-		}
-		else
-		{
-			return (result == 0 ? 0 : -1);
-		}
-	}
-
-	return -1;
-}
-
-/*
- * Return current used index (i.e. frontend connected)
- */
-int
-pool_pool_index(void)
-{
-	return pool_index;
-}
 
 /*
  * send frontend exiting messages to all connections.  this is called
@@ -1064,8 +583,9 @@ pool_pool_index(void)
 void
 close_all_backend_connections(void)
 {
+#ifdef NOT_USED
 	int			i;
-	POOL_CONNECTION_POOL *p = pool_connection_pool;
+	BackendClusterConnection *p = pool_connection_pool;
 
 	pool_sigset_t oldmask;
 
@@ -1083,40 +603,81 @@ close_all_backend_connections(void)
 	}
 
 	POOL_SETMASK(&oldmask);
+#endif
 }
 
-/*
- * Return number of established connections in the connection pool.
- * This is called when a client disconnects to pgpool.
- */
-void
-update_pooled_connection_count(void)
-{
-	int i;
-	int count = 0;
-	POOL_CONNECTION_POOL *p = pool_connection_pool;
-	for (i = 0; i < pool_config->max_pool; i++, p++)
-	{
-		if (MAIN_CONNECTION(p))
-			count++;
-	}
-	pool_get_my_process_info()->pooled_connections = count;
-}
 
 /*
  * Return the first node id in use.
  * If no node is in use, return -1.
  */
 int
-in_use_backend_id(POOL_CONNECTION_POOL *pool)
+in_use_backend_id(BackendClusterConnection *pool)
 {
 	int	i;
 
 	for (i = 0; i < NUM_BACKENDS; i++)
 	{
-		if (pool->slots[i])
+		if (pool->slots[i].con)
 			return i;
 	}
 
 	return -1;
 }
+
+
+/* Handles the failover/failback event in child process */
+// void
+// HandleNodeChangeEventForLeasedConnection(void)
+// {
+// 	ConnectionPoolEntry* pool_entry = GetChildConnectionPoolEntry();
+// 	if (pool_entry == NULL)
+// 		return;
+
+// 	if (pool_entry->endPoint.node_status_changed == NODE_STATUS_SYNC)
+// 		return;
+
+// 	if (pool_entry->endPoint.node_status_changed | NODE_STATUS_NODE_PRIMARY_CHANGED)
+// 	{
+// 		/* See if we have a different primary node */
+// 		if (Req_info->primary_node_id != pool_entry->endPoint.primary_node_id)
+// 		{
+// 			ereport(LOG,
+// 				(errmsg("Primary node changed from %d to %d", pool_entry->endPoint.primary_node_id, Req_info->primary_node_id)));
+// 			/* What to do here ??  TODO */
+// 		}
+// 	}
+// 	else if (pool_entry->endPoint.node_status_changed | NODE_STATUS_NODE_REMOVED)
+// 	{
+// 		int i;
+// 		for (i = 0; i < NUM_BACKENDS; i++)
+// 		{
+// 			if ((pool_entry->endPoint.backend_status[i] == CON_UP) &&
+// 				(BACKEND_INFO(i).backend_status == CON_DOWN || BACKEND_INFO(i).backend_status == CON_UNUSED))
+// 			{
+// 				ereport(LOG,
+// 					(errmsg("Backend node %d was failed", i)));
+// 				pool_entry->endPoint.backend_status[i] = BACKEND_INFO(i).backend_status;
+// 				/* Verify if the failed node was load balancing node */
+// 				if (i == pool_entry->endPoint.load_balancing_node)
+// 				{
+// 					/* if we were idle. Just select a new load balancing node and continue */
+// 					pool_select_new_load_balance_node(true);
+// 				}
+// 				if (i == pool_entry->endPoint.primary_node_id)
+// 				{
+// 					/* Primary node failed */
+
+// 				}
+// 			}
+// 		}
+
+// 		if (pool_entry->endPoint.load_balancing_node >= 0)
+// 		{
+// 			if (pool_entry->endPoint.backend_status[pool_entry->endPoint.load_balancing_node])
+// 			ereport(LOG,
+// 				(errmsg("Node %d removed from load balancing", pool_entry->endPoint.load_balancing_node)));
+// 			/* What to do here ??  TDOD */
+// 		}
+// 	}
+// }

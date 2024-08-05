@@ -35,7 +35,7 @@
 
 POOL_STATUS
 AsciiRow(POOL_CONNECTION * frontend,
-		 POOL_CONNECTION_POOL * backend,
+		 BackendClusterConnection * backend,
 		 short num_fields)
 {
 	static char nullmap[8192],
@@ -162,7 +162,7 @@ AsciiRow(POOL_CONNECTION * frontend,
 
 POOL_STATUS
 BinaryRow(POOL_CONNECTION * frontend,
-		  POOL_CONNECTION_POOL * backend,
+		  BackendClusterConnection * backend,
 		  short num_fields)
 {
 	static char nullmap[8192],
@@ -274,7 +274,7 @@ BinaryRow(POOL_CONNECTION * frontend,
 
 POOL_STATUS
 CompletedResponse(POOL_CONNECTION * frontend,
-				  POOL_CONNECTION_POOL * backend)
+				  BackendClusterConnection * backend)
 {
 	int			i;
 	char	   *string = NULL;
@@ -340,7 +340,7 @@ CompletedResponse(POOL_CONNECTION * frontend,
 
 POOL_STATUS
 CursorResponse(POOL_CONNECTION * frontend,
-			   POOL_CONNECTION_POOL * backend)
+			   BackendClusterConnection * backend)
 {
 	char	   *string = NULL;
 	char	   *string1 = NULL;
@@ -388,7 +388,7 @@ CursorResponse(POOL_CONNECTION * frontend,
 
 void
 EmptyQueryResponse(POOL_CONNECTION * frontend,
-				   POOL_CONNECTION_POOL * backend)
+				   BackendClusterConnection * backend)
 {
 	char		c;
 	int			i;
@@ -407,7 +407,7 @@ EmptyQueryResponse(POOL_CONNECTION * frontend,
 
 POOL_STATUS
 ErrorResponse(POOL_CONNECTION * frontend,
-			  POOL_CONNECTION_POOL * backend)
+			  BackendClusterConnection * backend)
 {
 	char	   *string = "";
 	int			len = 0;
@@ -449,7 +449,7 @@ ErrorResponse(POOL_CONNECTION * frontend,
 
 POOL_STATUS
 FunctionResultResponse(POOL_CONNECTION * frontend,
-					   POOL_CONNECTION_POOL * backend)
+					   BackendClusterConnection * backend)
 {
 	char		dummy;
 	int			len;
@@ -518,7 +518,7 @@ FunctionResultResponse(POOL_CONNECTION * frontend,
 
 void
 NoticeResponse(POOL_CONNECTION * frontend,
-			   POOL_CONNECTION_POOL * backend)
+			   BackendClusterConnection * backend)
 {
 	char	   *string = NULL;
 	int			len = 0;
@@ -551,7 +551,7 @@ NoticeResponse(POOL_CONNECTION * frontend,
 
 POOL_STATUS
 NotificationResponse(POOL_CONNECTION * frontend,
-					 POOL_CONNECTION_POOL * backend)
+					 BackendClusterConnection * backend)
 {
 	int			pid,
 				pid1;
@@ -594,7 +594,7 @@ NotificationResponse(POOL_CONNECTION * frontend,
 
 int
 RowDescription(POOL_CONNECTION * frontend,
-			   POOL_CONNECTION_POOL * backend,
+			   BackendClusterConnection * backend,
 			   short *result)
 {
 	short		num_fields,

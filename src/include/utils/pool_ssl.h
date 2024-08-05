@@ -23,6 +23,8 @@
 #ifndef pool_ssl_h
 #define pool_ssl_h
 
+#include "connection_pool/backend_connection.h"
+
 #ifdef USE_SSL
 /*
  *	Hardcoded DH parameters, used in ephemeral DH keying.

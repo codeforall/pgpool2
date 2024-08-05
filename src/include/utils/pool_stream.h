@@ -27,7 +27,7 @@
 #define POOL_STREAM_H
 
 #include "utils/socket_stream.h"
-
+#include "connection_pool/connection_pool.h"
 #define READBUFSZ 1024
 #define WRITEBUFSZ 8192
 
@@ -45,7 +45,7 @@
     } while (0)
 
 extern POOL_CONNECTION * pool_open(int fd, bool backend_connection);
-extern void pool_close(POOL_CONNECTION * cp);
+extern void pool_close(POOL_CONNECTION * cp, bool close_socket);
 extern int	pool_read(POOL_CONNECTION * cp, void *buf, int len);
 extern void pool_read_with_error(POOL_CONNECTION * cp, void *buf, int len,
 					 const char *err_context);

@@ -10,6 +10,7 @@ pgpool_SOURCES = main/main.c \
 	main/health_check.c \
 	main/pool_internal_comms.c \
 	main/pgpool_logger.c \
+	main/pgpool_ipc.c \
 	config/pool_config.l \
 	config/pool_config_variables.c \
 	pcp_con/pcp_child.c \
@@ -34,6 +35,8 @@ pgpool_SOURCES = main/main.c \
 	streaming_replication/pool_worker_child.c \
 	rewrite/pool_timestamp.c \
 	rewrite/pool_lobj.c \
+	utils/ancillary/fd_recv.c \
+	utils/ancillary/fd_send.c \
 	utils/pool_select_walker.c \
 	utils/strlcpy.c \
 	utils/psprintf.c \
@@ -65,7 +68,12 @@ pgpool_SOURCES = main/main.c \
 	utils/statistics.c \
 	utils/pool_health_check_stats.c \
 	utils/psqlscan.l \
-	utils/pgstrcasecmp.c
+	utils/pgstrcasecmp.c \
+	connection_pool/backend_connection.c \
+	connection_pool/connection_pool.c \
+	connection_pool/global_connection_pool.c \
+	connection_pool/classic_connection_pool.c
+
 
 utils/psqlscan.c: utils/psqlscan.l
 	$(LEX) -o'utils/psqlscan.c' $<

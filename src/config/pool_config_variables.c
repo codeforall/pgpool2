@@ -195,11 +195,11 @@ static char *ShowOption(struct config_generic *record, int index, int elevel);
 
 static char *config_enum_get_options(struct config_enum *record, const char *prefix,
 						const char *suffix, const char *separator);
-static void send_row_description_for_detail_view(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend);
+static void send_row_description_for_detail_view(POOL_CONNECTION * frontend, BackendClusterConnection * backend);
 static int send_grouped_type_variable_to_frontend(struct config_grouped_array_var *grouped_record,
-									   POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend);
+									   POOL_CONNECTION * frontend, BackendClusterConnection * backend);
 static int send_array_type_variable_to_frontend(struct config_generic *record,
-									 POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend);
+									 POOL_CONNECTION * frontend, BackendClusterConnection * backend);
 
 #endif
 
@@ -296,6 +296,12 @@ static const struct config_enum_entry disable_load_balance_on_write_options[] = 
 static const struct config_enum_entry relcache_query_target_options[] = {
 	{"primary", RELQTARGET_PRIMARY, false},
 	{"load_balance_node", RELQTARGET_LOAD_BALANCE_NODE, false},
+	{NULL, 0, false}
+};
+
+static const struct config_enum_entry connection_pool_type_options[] = {
+	{"global", GLOBAL_CONNECTION_POOL, false},
+	{"classic", CLASSIC_CONNECTION_POOL, false},
 	{NULL, 0, false}
 };
 
@@ -2068,6 +2074,28 @@ static struct config_int ConfigureNamesInt[] =
 	},
 
 	{
+		{"max_pool_size", CFGCXT_INIT, CONNECTION_POOL_CONFIG,
+			"Maximum number of global connection pools.",
+			CONFIG_VAR_TYPE_INT, false, 0
+		},
+		&g_pool_config.max_pool_size,
+		32,
+		0, INT_MAX,
+		NULL, NULL, NULL
+	},
+
+	{
+		{"pool_availability_timeout", CFGCXT_INIT, CONNECTION_POOL_CONFIG,
+			"Maximum time in seconds a new connection can wait for a pool slot, if the connection pool is full.",
+			CONFIG_VAR_TYPE_INT, false, GUC_UNIT_S
+		},
+		&g_pool_config.pool_availability_timeout,
+		5,
+		0, INT_MAX,
+		NULL, NULL, NULL
+	},
+
+	{
 		{"sr_check_period", CFGCXT_RELOAD, STREAMING_REPLICATION_CONFIG,
 			"Time interval in seconds between the streaming replication delay checks.",
 			CONFIG_VAR_TYPE_INT, false, GUC_UNIT_S
@@ -2440,6 +2468,17 @@ static struct config_enum ConfigureNamesEnum[] =
 		(int *) &g_pool_config.relcache_query_target,
 		RELQTARGET_PRIMARY,
 		relcache_query_target_options,
+		NULL, NULL, NULL, NULL
+	},
+
+	{
+		{"connection_pool_type", CFGCXT_INIT, CONNECTION_POOL_CONFIG,
+			"connection pooling type.",
+			CONFIG_VAR_TYPE_ENUM, false, 0
+		},
+		(int *) &g_pool_config.connection_pool_type,
+		CLASSIC_CONNECTION_POOL,
+		connection_pool_type_options,
 		NULL, NULL, NULL, NULL
 	},
 
@@ -4858,6 +4897,14 @@ config_post_processor(ConfigContext context, int elevel)
 		strcpy(g_pool_config.wd_nodes.wd_node_info[g_pool_config.pgpool_node_id].hostname, localhostname);
 		return true;
 	}
+
+	if (g_pool_config.connection_cache == false && g_pool_config.connection_pool_type == GLOBAL_CONNECTION_POOL)
+	{
+		ereport(elevel,
+				(errmsg("invalid configuration, connection_cache should be enabled when connection_pool_type is set to global")));
+		return false;
+	}
+
 	for (i = 0; i < MAX_CONNECTION_SLOTS; i++)
 	{
 		BackendInfo *backend_info = &g_pool_config.backend_desc->backend_info[i];
@@ -5907,7 +5954,7 @@ value_slot_for_config_record_is_empty(struct config_generic *record, int index)
 }
 
 bool
-set_config_option_for_session(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend, const char *name, const char *value)
+set_config_option_for_session(POOL_CONNECTION * frontend, BackendClusterConnection * backend, const char *name, const char *value)
 {
 	bool		ret;
 	MemoryContext oldCxt = MemoryContextSwitchTo(TopMemoryContext);
@@ -5922,7 +5969,7 @@ set_config_option_for_session(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL *
 }
 
 bool
-reset_all_variables(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend)
+reset_all_variables(POOL_CONNECTION * frontend, BackendClusterConnection * backend)
 {
 	int			i;
 	int			elevel = (frontend == NULL) ? FATAL : FRONTEND_ONLY_ERROR;
@@ -5991,7 +6038,7 @@ reset_all_variables(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend)
  * Handle "pgpool show all" command.
 */
 bool
-report_all_variables(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend)
+report_all_variables(POOL_CONNECTION * frontend, BackendClusterConnection * backend)
 {
 	int			i;
 	int			num_rows = 0;
@@ -6049,7 +6096,7 @@ report_all_variables(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend)
  * Handle "pgpool show" command.
 */
 bool
-report_config_variable(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend, const char *var_name)
+report_config_variable(POOL_CONNECTION * frontend, BackendClusterConnection * backend, const char *var_name)
 {
 	int			index = 0;
 	char	   *value;
@@ -6123,7 +6170,7 @@ report_config_variable(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backen
 }
 
 static int
-send_array_type_variable_to_frontend(struct config_generic *record, POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend)
+send_array_type_variable_to_frontend(struct config_generic *record, POOL_CONNECTION * frontend, BackendClusterConnection * backend)
 {
 	if (record->dynamic_array_var)
 	{
@@ -6164,7 +6211,7 @@ send_array_type_variable_to_frontend(struct config_generic *record, POOL_CONNECT
 }
 
 static int
-send_grouped_type_variable_to_frontend(struct config_grouped_array_var *grouped_record, POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend)
+send_grouped_type_variable_to_frontend(struct config_grouped_array_var *grouped_record, POOL_CONNECTION * frontend, BackendClusterConnection * backend)
 {
 	int			k,
 				index;
@@ -6215,7 +6262,7 @@ send_grouped_type_variable_to_frontend(struct config_grouped_array_var *grouped_
 }
 
 static void
-send_row_description_for_detail_view(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend)
+send_row_description_for_detail_view(POOL_CONNECTION * frontend, BackendClusterConnection * backend)
 {
 	static char *field_names[] = {"item", "value", "description"};
 

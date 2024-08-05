@@ -176,8 +176,6 @@ typedef struct
 	time_t		start_time;		/* fork() time */
 	char		connected;		/* if not 0 this process is already used*/
 	int			wait_for_connect;	/* waiting time for client connection (s) */
-	ConnectionInfo *connection_info;	/* head of the connection info for
-										 * this process */
 	int			client_connection_count;	/* how many times clients used this process */
 	ProcessStatus	status;
 	bool		need_to_restart;	/* If non 0, exit this child process as
@@ -187,6 +185,18 @@ typedef struct
 	bool		exit_if_idle;
 	int		pooled_connections; /* Total number of pooled connections
 									  * by this child */
+	/* Following fields are used to request connection from main process */
+	char		database[SM_DATABASE];	/* Database name */
+	char		user[SM_USER];	/* User name */
+	int			major;			/* protocol major version */
+	int			minor;			/* protocol minor version */
+	/*
+	 * Following are used by main process to return the info to child
+	 * We do not lock these fields and make sure the client only read
+	 * this after receiving the indication from main process
+	 */
+	int         pool_id;
+
 }			ProcessInfo;
 
 /*

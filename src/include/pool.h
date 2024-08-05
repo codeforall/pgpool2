@@ -4,7 +4,7 @@
  * pgpool: a language independent connection pool server for PostgreSQL
  * written by Tatsuo Ishii
  *
- * Copyright (c) 2003-2023	PgPool Global Development Group
+ * Copyright (c) 2003-2024	PgPool Global Development Group
  *
  * Permission to use, copy, modify, and distribute this software and
  * its documentation for any purpose and without fee is hereby
@@ -84,6 +84,12 @@
 #define RETRY				(-2)
 #define OPERATION_TIMEOUT	(-3)
 
+typedef struct
+{
+	int 	child_link;
+	pid_t	child_pid;
+	int		proc_info_id;
+} IPC_Endpoint;
 
 typedef enum
 {
@@ -103,13 +109,18 @@ typedef enum
 	POOL_SOCKET_EOF
 }			POOL_SOCKET_STATE;
 
-/* protocol major version numbers */
-#define PROTO_MAJOR_V2	2
-#define PROTO_MAJOR_V3	3
+#define MAX_PASSWORD_SIZE		1024
 
-/* Cancel packet proto major */
-#define PROTO_CANCEL	80877102
+#define NODE_STATUS_SYNC					0x00
+#define NODE_STATUS_NODE_REMOVED			0x02
+#define NODE_STATUS_NODE_ATTACHED			0x04
+#define NODE_STATUS_NODE_PRIMARY_CHANGED	0x08
 
+/*
+ * HbaLines is declared in pool_hba.h
+ * we use forward declaration here
+ */
+typedef struct HbaLine HbaLine;
 /*
  * In protocol 3.0 and later, the startup packet length is not fixed, but
  * we set an arbitrary limit on it anyway.	This is just to prevent simple
@@ -118,161 +129,60 @@ typedef enum
  */
 #define MAX_STARTUP_PACKET_LENGTH 10000
 
+/* protocol major version numbers */
+#define PROTO_MAJOR_V2 2
+#define PROTO_MAJOR_V3 3
+
+/* Cancel packet proto major */
+#define PROTO_CANCEL 80877102
 
 typedef struct StartupPacket_v2
 {
-	int			protoVersion;	/* Protocol version */
-	char		database[SM_DATABASE];	/* Database name */
-	char		user[SM_USER];	/* User name */
-	char		options[SM_OPTIONS];	/* Optional additional args */
-	char		unused[SM_UNUSED];	/* Unused */
-	char		tty[SM_TTY];	/* Tty for debug output */
-}			StartupPacket_v2;
+	int protoVersion;			/* Protocol version */
+	char database[SM_DATABASE]; /* Database name */
+	char user[SM_USER];			/* User name */
+	char options[SM_OPTIONS];	/* Optional additional args */
+	char unused[SM_UNUSED];		/* Unused */
+	char tty[SM_TTY];			/* Tty for debug output */
+} StartupPacket_v2;
 
 /* startup packet info */
 typedef struct
 {
-	char	   *startup_packet; /* raw startup packet without packet length
-								 * (malloced area) */
-	int			len;			/* raw startup packet length */
-	int			major;			/* protocol major version */
-	int			minor;			/* protocol minor version */
-	char	   *database;		/* database name in startup_packet (malloced
-								 * area) */
-	char	   *user;			/* user name in startup_packet (malloced area) */
-	char	   *application_name;	/* not malloced. pointing to in
-									 * startup_packet */
+	char *startup_packet;	/* raw startup packet without packet length
+							 * (malloced area) */
+	int len;				/* raw startup packet length */
+	int major;				/* protocol major version */
+	int minor;				/* protocol minor version */
+	char *database;			/* database name in startup_packet (malloced
+							 * area) */
+	char *user;				/* user name in startup_packet (malloced area) */
+	char *application_name; /* not malloced. pointing to in
+							 * startup_packet */
 } StartupPacket;
 
 typedef struct CancelPacket
 {
-	int			protoVersion;	/* Protocol version */
-	int			pid;			/* backend process id */
-	int			key;			/* cancel key */
-}			CancelPacket;
+	int protoVersion; /* Protocol version */
+	int pid;		  /* backend process id */
+	int key;		  /* cancel key */
+} CancelPacket;
 
-#define MAX_PASSWORD_SIZE		1024
-
-
-/*
- * HbaLines is declared in pool_hba.h
- * we use forward declaration here
- */
-typedef struct HbaLine HbaLine;
-
-
-/*
- * stream connection structure
- */
-typedef struct
+typedef enum LEASE_TYPES
 {
-	int			fd;				/* fd for connection */
-
-	char	   *wbuf;			/* write buffer for the connection */
-	int			wbufsz;			/* write buffer size */
-	int			wbufpo;			/* buffer offset */
-
-#ifdef USE_SSL
-	SSL_CTX    *ssl_ctx;		/* SSL connection context */
-	SSL		   *ssl;			/* SSL connection */
-	X509	   *peer;
-	char	   *cert_cn;		/* common in the ssl certificate presented by
-								 * frontend connection Used for cert
-								 * authentication */
-	bool		client_cert_loaded;
-
-#endif
-	int			ssl_active;		/* SSL is failed if < 0, off if 0, on if > 0 */
-
-	char	   *hp;				/* pending data buffer head address */
-	int			po;				/* pending data offset */
-	int			bufsz;			/* pending data buffer size */
-	int			len;			/* pending data length */
-
-	char	   *sbuf;			/* buffer for pool_read_string */
-	int			sbufsz;			/* its size in bytes */
-
-	char	   *buf2;			/* buffer for pool_read2 */
-	int			bufsz2;			/* its size in bytes */
-
-	char	   *buf3;			/* buffer for pool_push/pop */
-	int			bufsz3;			/* its size in bytes */
-
-	int			isbackend;		/* this connection is for backend if non 0 */
-	int			db_node_id;		/* DB node id for this connection */
-
-	char		tstate;			/* Transaction state (V3 only) 'I' if idle
-								 * (not in a transaction block); 'T' if in a
-								 * transaction block; or 'E' if in a failed
-								 * transaction block */
-
-	/* True if an internal transaction has already started */
-	bool		is_internal_transaction_started;
-
-	/*
-	 * following are used to remember when re-use the authenticated connection
-	 */
-	int			auth_kind;		/* 3: clear text password, 4: crypt password,
-								 * 5: md5 password */
-	int			pwd_size;		/* password (sent back from frontend) size in
-								 * host order */
-	char		password[MAX_PASSWORD_SIZE + 1];	/* password (sent back
-													 * from frontend) */
-	char		salt[4];		/* password salt */
-	PasswordType passwordType;
-
-	/*
-	 * following are used to remember current session parameter status.
-	 * re-used connection will need them (V3 only)
-	 */
-	ParamStatus params;
-
-	int			no_forward;		/* if non 0, do not write to frontend */
-
-	char		kind;			/* kind cache */
-
-	/* true if remote end closed the connection */
-	POOL_SOCKET_STATE socket_state;
-
-	/*
-	 * frontend info needed for hba
-	 */
-	int			protoVersion;
-	SockAddr	raddr;
-	HbaLine    *pool_hba;
-	char	   *database;
-	char	   *username;
-	char	   *remote_hostname;
-	int			remote_hostname_resolv;
-	bool		frontend_authenticated;
-	PasswordMapping *passwordMapping;
-	ConnectionInfo *con_info;	/* shared memory coninfo used for handling the
-								 * query containing pg_terminate_backend */
-}			POOL_CONNECTION;
-
-/*
- * connection pool structure
- */
-typedef struct
-{
-	StartupPacket *sp;			/* startup packet info */
-	int			pid;			/* backend pid */
-	int			key;			/* cancel key */
-	POOL_CONNECTION *con;
-	time_t		closetime;		/* absolute time in second when the connection
-								 * closed if 0, that means the connection is
-								 * under use. */
-}			POOL_CONNECTION_POOL_SLOT;
-
-typedef struct
-{
-	ConnectionInfo *info;		/* connection info on shmem */
-	POOL_CONNECTION_POOL_SLOT *slots[MAX_NUM_BACKENDS];
-}			POOL_CONNECTION_POOL;
-
+	LEASE_TYPE_INVALID,
+	LEASE_TYPE_FREE,
+	LEASE_TYPE_READY_TO_USE,
+	LEASE_TYPE_DISCART_AND_CREATE,
+	LEASE_TYPE_EMPTY_SLOT_RESERVED,
+	LEASE_TYPE_NO_AVAILABLE_SLOT,
+	LEASE_TYPE_NON_POOL_CONNECTION,
+	LEASE_TYPE_LEASE_FAILED
+} LEASE_TYPES;
 
 /* Defined in pool_session_context.h */
-extern int	pool_get_major_version(void);
+extern int
+pool_get_major_version(void);
 
 /* NUM_BACKENDS now always returns actual number of backends */
 #define NUM_BACKENDS (pool_config->backend_desc->num_backends)
@@ -304,7 +214,7 @@ extern int	my_main_node_id;
 	 (*(my_backend_status[(backend_id)]) == CON_CONNECT_WAIT))
 
 #define CONNECTION_SLOT(p, slot) ((p)->slots[(slot)])
-#define CONNECTION(p, slot) (CONNECTION_SLOT(p, slot)->con)
+#define CONNECTION(p, slot) (CONNECTION_SLOT(p, slot).con)
 
 /*
  * The first DB node id appears in pgpool.conf or the first "live" DB
@@ -335,7 +245,7 @@ extern int	my_main_node_id;
 #define MAIN_NODE_ID (pool_virtual_main_db_node_id())
 #define IS_MAIN_NODE_ID(node_id) (MAIN_NODE_ID == (node_id))
 #define MAIN_CONNECTION(p) ((p)->slots[MAIN_NODE_ID])
-#define MAIN(p) MAIN_CONNECTION(p)->con
+#define MAIN(p) MAIN_CONNECTION(p).con
 
 /*
  * Backend node status in streaming replication mode.
@@ -567,7 +477,6 @@ extern volatile sig_atomic_t health_check_timer_expired;	/* non 0 if health chec
 															 * timer expired */
 extern int	my_proc_id;			/* process table id (!= UNIX's PID) */
 extern ProcessInfo * process_info;	/* shmem process information table */
-extern ConnectionInfo * con_info;	/* shmem connection info table */
 extern POOL_REQUEST_INFO * Req_info;
 extern volatile sig_atomic_t *InRecovery;
 extern volatile sig_atomic_t got_sighup;
@@ -600,7 +509,7 @@ extern void pcp_main(int *fds);
 
 /*child.c*/
 
-extern void do_child(int *fds);
+extern void do_child(int *fds, int ipc_fd);
 extern void child_exit(int code);
 
 extern void cancel_request(CancelPacket * sp);
@@ -624,13 +533,13 @@ extern BackendInfo * pool_get_node_info(int node_number);
 extern int	pool_get_node_count(void);
 extern int *pool_get_process_list(int *array_size);
 extern ProcessInfo * pool_get_process_info(pid_t pid);
+extern ProcessInfo * pool_get_process_info_from_IPC_Endpoint(IPC_Endpoint *endpoint);
 extern void pool_sleep(unsigned int second);
 extern int	PgpoolMain(bool discard_status, bool clear_memcache_oidmaps);
 extern int	pool_send_to_frontend(char *data, int len, bool flush);
 extern int	pool_frontend_exists(void);
 extern pid_t pool_waitpid(int *status);
 extern int	write_status_file(void);
-extern POOL_NODE_STATUS * verify_backend_node_status(POOL_CONNECTION_POOL_SLOT * *slots);
 extern POOL_NODE_STATUS * pool_get_node_status(void);
 extern void pool_set_backend_status_changed_time(int backend_id);
 extern int	get_next_main_node(void);
@@ -644,7 +553,7 @@ extern size_t strlcpy(char *dst, const char *src, size_t siz);
 #endif
 
 /* pool_worker_child.c */
+
 extern void do_worker_child(void);
-extern int	get_query_result(POOL_CONNECTION_POOL_SLOT * *slots, int backend_id, char *query, POOL_SELECT_RESULT * *res);
 
 #endif							/* POOL_H */

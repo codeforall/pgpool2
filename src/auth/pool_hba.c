@@ -1306,7 +1306,7 @@ ClientAuthentication(POOL_CONNECTION * frontend)
 	}
 	PG_CATCH();
 	{
-		close_all_backend_connections();
+		ReleaseChildConnectionPool();
 		PG_RE_THROW();
 	}
 	PG_END_TRY();
@@ -1501,7 +1501,7 @@ auth_failed(POOL_CONNECTION * frontend)
 					 frontend->username);
 			break;
 	}
-	close_all_backend_connections();
+	ReleaseChildConnectionPool();
 	ereport(FATAL,
 			(return_code(2),
 			 errmsg("client authentication failed"),

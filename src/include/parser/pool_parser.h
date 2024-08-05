@@ -30,21 +30,6 @@ extern int	server_version_num;
 /* from include/postgresql_ext.h */
 #define InvalidOid		((Oid) 0)
 
-/* from include/c.h */
-
-/*
- * CppAsString
- *		Convert the argument to a string, using the C preprocessor.
- * CppConcat
- *		Concatenate two arguments together, using the C preprocessor.
- *
- * Note: There used to be support here for pre-ANSI C compilers that didn't
- * support # and ##.  Nowadays, these macros are just for clarity and/or
- * backward compatibility with existing PostgreSQL code.
- */
-#define CppAsString(identifier) #identifier
-#define CppConcat(x, y)			x##y
-
 /*
  * Index
  *		Index into any memory resident array.

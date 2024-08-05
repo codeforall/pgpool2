@@ -60,15 +60,19 @@ get_pool_config_from_json(char *json_data, int data_len)
 		goto ERROR_EXIT;
 	if (json_get_int_value_for_key(root, "max_pool", &config->max_pool))
 		goto ERROR_EXIT;
+	if (json_get_int_value_for_key(root, "max_pool_size", &config->max_pool_size))
+		goto ERROR_EXIT;
 	if (json_get_int_value_for_key(root, "num_init_children", &config->num_init_children))
 		goto ERROR_EXIT;
 	if (json_get_int_value_for_key(root, "min_spare_children", &config->min_spare_children))
 		goto ERROR_EXIT;
 	if (json_get_int_value_for_key(root, "max_spare_children", &config->max_spare_children))
 		goto ERROR_EXIT;
-	if (json_get_int_value_for_key(root, "process_management_mode", (int*)&config->process_management))
+	if (json_get_int_value_for_key(root, "connection_pool_type", (int *)&config->connection_pool_type))
 		goto ERROR_EXIT;
-	if (json_get_int_value_for_key(root, "process_management_strategy", (int*)&config->process_management_strategy))
+	if (json_get_int_value_for_key(root, "process_management_mode", (int *)&config->process_management))
+		goto ERROR_EXIT;
+	if (json_get_int_value_for_key(root, "process_management_strategy", (int *)&config->process_management_strategy))
 		goto ERROR_EXIT;
 	if (json_get_bool_value_for_key(root, "replication_mode", &config->replication_mode))
 		goto ERROR_EXIT;

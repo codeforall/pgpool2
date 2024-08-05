@@ -46,14 +46,18 @@
 #include "main/health_check.h"
 #include "main/pool_internal_comms.h"
 #include "main/pgpool_logger.h"
+#include "main/pgpool_ipc.h"
+#include "connection_pool/backend_connection.h"
 #include "utils/elog.h"
 #include "utils/palloc.h"
 #include "utils/memutils.h"
 #include "utils/statistics.h"
 #include "utils/pool_ipc.h"
+#include "utils/socket_stream.h"
 #include "context/pool_process_context.h"
 #include "protocol/pool_process_query.h"
 #include "protocol/pool_pg_utils.h"
+#include "protocol/pool_connection_pool.h"
 #include "auth/pool_passwd.h"
 #include "auth/pool_hba.h"
 #include "query_cache/pool_memqcache.h"
@@ -118,7 +122,7 @@ typedef struct User1SignalSlot
 
 #define PGPOOLMAXLITSENQUEUELENGTH 10000
 #define MAX_ONE_SHOT_KILLS 8
-
+#define SERVICE_CHILD_RASTER_SECONDS	5
 
 #define UNIXSOCK_PATH_BUFLEN sizeof(((struct sockaddr_un *) NULL)->sun_path)
 
@@ -182,9 +186,9 @@ static void system_will_go_down(int code, Datum arg);
 static char *process_name_from_pid(pid_t pid);
 static void sync_backend_from_watchdog(void);
 static void update_backend_quarantine_status(void);
-static int	get_server_version(POOL_CONNECTION_POOL_SLOT * *slots, int node_id);
+static int get_server_version(BackendNodeConnection **slots, int node_id);
 static void get_info_from_conninfo(char *conninfo, char *host, int hostlen, char *port, int portlen);
-
+static void child_process_exits(int child_id, pid_t child_pid);
 /*
  * Subroutines of failover()
  */
@@ -197,10 +201,12 @@ static int exec_follow_primary_command(FAILOVER_CONTEXT *failover_context, int n
 static void save_node_info(FAILOVER_CONTEXT *failover_context, int new_primary_node_id, int new_main_node_id);
 static void exec_child_restart(FAILOVER_CONTEXT *failover_context, int node_id);
 static void exec_notice_pcp_child(FAILOVER_CONTEXT *failover_context);
+static void conform_children_to_node_failure(int failed_node_id, bool need_total_reset, bool prepare_only);
 
-static void check_requests(void);
+	static void check_requests(void);
 static void print_signal_member(sigset_t *sig);
 static void service_child_processes(void);
+static bool handle_child_ipc_requests(void);
 static int select_victim_processes(int *process_info_idxs, int count);
 
 static struct sockaddr_un *un_addrs;	/* unix domain socket path */
@@ -210,6 +216,7 @@ volatile	User1SignalSlot *user1SignalSlot = NULL;	/* User 1 signal slot on
 														 * shmem */
 int		current_child_process_count;
 
+IPC_Endpoint *ipc_endpoints = NULL;	/* IPC endpoints for child processes */
 struct timeval random_start_time;
 
 /*
@@ -221,14 +228,6 @@ static pid_t health_check_pids[MAX_NUM_BACKENDS];
  * Private copy of backend status
  */
 BACKEND_STATUS private_backend_status[MAX_NUM_BACKENDS];
-
-/*
- * shmem connection info table
- * this is a three dimension array. i.e.:
- * con_info[pool_config->num_init_children][pool_config->max_pool][MAX_NUM_BACKENDS]
- */
-ConnectionInfo *con_info;
-
 static int *fds = NULL;				/* listening file descriptors (UNIX socket,
 								 * inet domain sockets) */
 
@@ -294,6 +293,7 @@ PgpoolMain(bool discard_status, bool clear_memcache_oidmaps)
 	int			*pcp_inet_fds;
 	int			i;
 	char		unix_domain_socket_path[UNIXSOCK_PATH_BUFLEN + 1024];
+	struct timeval last_child_service_time = {0,0};
 
 	sigjmp_buf	local_sigjmp_buf;
 
@@ -339,8 +339,8 @@ PgpoolMain(bool discard_status, bool clear_memcache_oidmaps)
 
 	if (num_unix_fds == 0)
 	{
-		ereport(FATAL,
-			   (errmsg("could not create any Unix-domain sockets")));
+		ereport(LOG,
+			   (errmsg("could not create any Unix-domain sockets %m")));
 	}
 
 	/* set unix domain socket path for pgpool PCP communication */
@@ -386,6 +386,11 @@ PgpoolMain(bool discard_status, bool clear_memcache_oidmaps)
 	if (syslogPipe[0] >= 0)
 		close(syslogPipe[0]);
 	syslogPipe[0] = -1;
+
+	if (pool_config->connection_pool_type == GLOBAL_CONNECTION_POOL)
+		InstallConnectionPool(GetGlobalConnectionPool());
+	else
+		InstallConnectionPool(GetClassicConnectionPool());
 
 	initialize_shared_mem_objects(clear_memcache_oidmaps);
 
@@ -537,6 +542,12 @@ PgpoolMain(bool discard_status, bool clear_memcache_oidmaps)
 	 */
 	POOL_SETMASK(&BlockSig);
 
+	if (pool_config->connection_pool_type == GLOBAL_CONNECTION_POOL)
+	{
+		ipc_endpoints = malloc(sizeof(IPC_Endpoint) * pool_config->num_init_children);
+		memset(ipc_endpoints, 0, sizeof(IPC_Endpoint) * pool_config->num_init_children);
+	}
+
 	if (pool_config->process_management == PM_DYNAMIC)
 	{
 		if (pool_config->process_management_strategy == PM_STRATEGY_AGGRESSIVE)
@@ -558,6 +569,7 @@ PgpoolMain(bool discard_status, bool clear_memcache_oidmaps)
 		process_info[i].pooled_connections = 0;
 		process_info[i].need_to_restart = false;
 		process_info[i].exit_if_idle = false;
+		process_info[i].pool_id = -1;
 		process_info[i].pid = fork_a_child(fds, i);
 	}
 
@@ -645,23 +657,23 @@ PgpoolMain(bool discard_status, bool clear_memcache_oidmaps)
 	/* This is the main loop */
 	for (;;)
 	{
+		bool process_service_child = false;
 		/* Check pending requests */
 		check_requests();
-#ifdef NOT_USED
-		CHECK_REQUEST;
-#endif
 		/*
 		 * check for child signals to ensure child startup before reporting
 		 * successful start.
 		 */
 		if (first)
 		{
-			int			i;
-			int			n;
+			int		i,n;
+
 			POOL_NODE_STATUS *node_status = pool_get_node_status();
 
 			ereport(LOG,
 					(errmsg("%s successfully started. version %s (%s)", PACKAGE, VERSION, PGPOOLVERSION)));
+			ereport(LOG,
+					(errmsg("Configured connection pooling: %s", GetConnectionPoolInfo())));
 
 			/*
 			 * Very early stage node checking. It is assumed that
@@ -686,24 +698,33 @@ PgpoolMain(bool discard_status, bool clear_memcache_oidmaps)
 					}
 				}
 			}
+			gettimeofday(&last_child_service_time, NULL);
 		}
 		first = false;
 
 		processState = SLEEPING;
-		for (;;)
+		if (pool_config->connection_pool_type == GLOBAL_CONNECTION_POOL)
 		{
-			int			r;
+			process_service_child = !handle_child_ipc_requests();
+		}
+		else
+		{
+			int r;
 			struct timeval t = {2, 0};
-
 			POOL_SETMASK(&UnBlockSig);
 			r = pool_pause(&t);
 			POOL_SETMASK(&BlockSig);
-
-			if (pool_config->process_management == PM_DYNAMIC)
+			process_service_child = true;
+		}
+		if (process_service_child && pool_config->process_management == PM_DYNAMIC)
+		{
+			struct timeval current_time;
+			gettimeofday(&current_time, NULL);
+			if (current_time.tv_sec - last_child_service_time.tv_sec >= SERVICE_CHILD_RASTER_SECONDS)
+			{
 				service_child_processes();
-
-			if (r > 0)
-				break;
+				gettimeofday(&last_child_service_time, NULL);
+			}
 		}
 	}
 }
@@ -832,12 +853,24 @@ static pid_t
 fork_a_child(int *fds, int id)
 {
 	pid_t		pid;
+	int ipc_sock[2] = {-1, -1};
+	if (pool_config->connection_pool_type == GLOBAL_CONNECTION_POOL)
+	{
+
+		if (socketpair(AF_UNIX, SOCK_STREAM, 0, ipc_sock) == -1) {
+			ereport(FATAL,
+				(errmsg("failed to IPC socket"),
+					errdetail("system call socketpair() failed with reason: %m")));
+		}
+	}
 
 	pid = fork();
 
 	if (pid == 0)
 	{
 		on_exit_reset();
+		if (pool_config->connection_pool_type == GLOBAL_CONNECTION_POOL)
+			close(ipc_sock[1]);
 
 		/*
 		 * Before we unconditionally closed pipe_fds[0] and pipe_fds[1] here,
@@ -860,7 +893,8 @@ fork_a_child(int *fds, int id)
 		health_check_timer_expired = 0;
 		reload_config_request = 0;
 		my_proc_id = id;
-		do_child(fds);
+		ereport(LOG,(errmsg("CHILD PROCESS %d, pid %d",id, getpid())));
+		do_child(fds, ipc_sock[0]);
 	}
 	else if (pid == -1)
 	{
@@ -868,7 +902,17 @@ fork_a_child(int *fds, int id)
 				(errmsg("failed to fork a child"),
 				 errdetail("system call fork() failed with reason: %m")));
 	}
-
+	else
+	{
+		if (pool_config->connection_pool_type == GLOBAL_CONNECTION_POOL)
+		{
+			close(ipc_sock[0]);
+			socket_set_nonblock(ipc_sock[1]);
+			ipc_endpoints[id].child_link = ipc_sock[1];
+			ipc_endpoints[id].child_pid = pid;
+			ipc_endpoints[id].proc_info_id = id;
+		}
+	}
 	return pid;
 }
 
@@ -1997,7 +2041,8 @@ reaper(void)
 				if (pid == process_info[i].pid)
 				{
 					found = true;
-					/* if found, fork a new child */
+					child_process_exits(i, pid);
+					/* fork a new child */
 					if (!switching && !exiting && restart_child &&
 						pool_config->process_management != PM_DYNAMIC)
 					{
@@ -2129,6 +2174,16 @@ pool_get_process_info(pid_t pid)
 		if (process_info[i].pid == pid)
 			return &process_info[i];
 
+	return NULL;
+}
+
+ProcessInfo *
+pool_get_process_info_from_IPC_Endpoint(IPC_Endpoint *endpoint)
+{
+	if (!endpoint || endpoint->proc_info_id <0 || endpoint->proc_info_id >= pool_config->num_init_children)
+		return NULL;
+	if (process_info[endpoint->proc_info_id].pid == endpoint->child_pid)
+			return &process_info[endpoint->proc_info_id];
 	return NULL;
 }
 
@@ -2437,7 +2492,7 @@ trigger_failover_command(int node, const char *command_line,
 static POOL_NODE_STATUS pool_node_status[MAX_NUM_BACKENDS];
 
 POOL_NODE_STATUS *
-verify_backend_node_status(POOL_CONNECTION_POOL_SLOT * *slots)
+verify_backend_node_status(BackendNodeConnection **slots)
 {
 	POOL_SELECT_RESULT *res;
 	int			num_primaries = 0;
@@ -2727,7 +2782,7 @@ static int
 find_primary_node(void)
 {
 	BackendInfo *bkinfo;
-	POOL_CONNECTION_POOL_SLOT *slots[MAX_NUM_BACKENDS];
+	BackendNodeConnection *slots[MAX_NUM_BACKENDS];
 	int			i;
 	POOL_NODE_STATUS *status;
 	int			primary = -1;
@@ -3003,7 +3058,6 @@ initialize_shared_mem_objects(bool clear_memcache_oidmaps)
 	size = 256;/* let us have some extra space */
 	size += MAXALIGN(sizeof(BackendDesc));
 	elog(DEBUG1, "BackendDesc: %zu bytes requested for shared memory", MAXALIGN(sizeof(BackendDesc)));
-	size += MAXALIGN(pool_coninfo_size());
 	size += MAXALIGN(pool_config->num_init_children * (sizeof(ProcessInfo)));
 	elog(DEBUG1, "ProcessInfo: num_init_children (%d) * sizeof(ProcessInfo) (%zu) = %zu bytes requested for shared memory",
 		 pool_config->num_init_children, sizeof(ProcessInfo), pool_config->num_init_children* sizeof(ProcessInfo));
@@ -3020,6 +3074,8 @@ initialize_shared_mem_objects(bool clear_memcache_oidmaps)
 	elog(DEBUG1, "SI_ManageInfo: %zu bytes requested for shared memory", MAXALIGN(sizeof(SI_ManageInfo)));
 	size += MAXALIGN(pool_config->num_init_children * sizeof(pid_t));
 	size += MAXALIGN(pool_config->num_init_children * sizeof(pid_t));
+
+	size += MAXALIGN(ConnectionPoolRequiredSharedMemSize());
 
 	if (pool_is_shmem_cache())
 	{
@@ -3049,14 +3105,17 @@ initialize_shared_mem_objects(bool clear_memcache_oidmaps)
 	pfree(pool_config->backend_desc);
 	pool_config->backend_desc = backend_desc;
 
-	/* get the shared memory from main segment*/
-	con_info = (ConnectionInfo *)pool_shared_memory_segment_get_chunk(pool_coninfo_size());
+	if (ConnectionPoolRequiredSharedMemSize() > 0)
+	{
+		void* shmem_loc = pool_shared_memory_segment_get_chunk(ConnectionPoolRequiredSharedMemSize());
+		InitializeConnectionPool(shmem_loc);
+	}
 
 	process_info = (ProcessInfo *)pool_shared_memory_segment_get_chunk(pool_config->num_init_children * (sizeof(ProcessInfo)));
 	for (i = 0; i < pool_config->num_init_children; i++)
 	{
-		process_info[i].connection_info = pool_coninfo(i, 0, 0);
 		process_info[i].pid = 0;
+		process_info[i].pool_id = -1;
 	}
 
 	user1SignalSlot = (User1SignalSlot *)pool_shared_memory_segment_get_chunk(sizeof(User1SignalSlot));
@@ -3741,7 +3800,6 @@ sync_backend_from_watchdog(void)
 		ereport(LOG,
 				(errmsg("primary node was changed after the sync from \"%s\"", backendStatus->nodeName),
 				 errdetail("all children needs to be restarted")));
-
 	}
 	else
 	{
@@ -3770,75 +3828,17 @@ sync_backend_from_watchdog(void)
 	/* Kill children and restart them if needed */
 	if (need_to_restart_children)
 	{
-		for (i = 0; i < pool_config->num_init_children; i++)
+		if (partial_restart)
 		{
-			bool		restart = false;
-
-			if (partial_restart)
+			for (i = 0; i < down_node_ids_index; i++)
 			{
-				int			j,
-							k;
-
-				for (j = 0; j < pool_config->max_pool; j++)
-				{
-					for (k = 0; k < NUM_BACKENDS; k++)
-					{
-						int			idx;
-						ConnectionInfo *con = pool_coninfo(i, j, k);
-
-						for (idx = 0; idx < down_node_ids_index; idx++)
-						{
-							int			node_id = down_node_ids[idx];
-
-							if (con->connected && con->load_balancing_node == node_id)
-							{
-								ereport(LOG,
-										(errmsg("child process with PID:%d needs restart, because pool %d uses backend %d",
-												process_info[i].pid, j, node_id)));
-								restart = true;
-								break;
-							}
-							if (restart)
-								break;
-						}
-					}
-				}
+				int node_id = down_node_ids[i];
+				conform_children_to_node_failure(node_id, false, false);
 			}
-			else
-			{
-				restart = true;
-			}
-
-			if (restart)
-			{
-				if (process_info[i].pid)
-				{
-					kill(process_info[i].pid, SIGQUIT);
-
-					process_info[i].pid = fork_a_child(fds, i);
-					process_info[i].start_time = time(NULL);
-					process_info[i].client_connection_count = 0;
-					process_info[i].status = WAIT_FOR_CONNECT;
-					process_info[i].connected = 0;
-					process_info[i].wait_for_connect = 0;
-					process_info[i].pooled_connections = 0;
-				}
-			}
-			else
-				process_info[i].need_to_restart = 1;
 		}
-	}
-
-	else
-	{
-		/*
-		 * Set restart request to each child. Children will exit(1) whenever
-		 * they are convenient.
-		 */
-		for (i = 0; i < pool_config->num_init_children; i++)
+		else
 		{
-			if (process_info[i].pid)
-				process_info[i].need_to_restart = 1;
+			conform_children_to_node_failure(0, true, false);
 		}
 	}
 
@@ -3867,7 +3867,7 @@ sync_backend_from_watchdog(void)
  * version number is in the static memory area.
  */
 static int
-get_server_version(POOL_CONNECTION_POOL_SLOT * *slots, int node_id)
+get_server_version(BackendNodeConnection **slots, int node_id)
 {
 	static int	server_versions[MAX_NUM_BACKENDS];
 
@@ -4303,13 +4303,104 @@ handle_failover_request(FAILOVER_CONTEXT *failover_context, int node_id)
 	return 0;
 }
 
+static void
+conform_children_to_node_failure(int failed_node_id, bool need_total_reset, bool prepare_only)
+{
+	int i;
+	ProcessInfo* pi;
+	int max_respawn_children = pool_config->num_init_children;
+	if (pool_config->process_management == PM_DYNAMIC)
+	{
+		/* We only need to spawn max_spare_child number of processes*/
+		max_respawn_children = pool_config->max_spare_children;
+	}
+
+	if (need_total_reset)
+	{
+		/* We need to restart all child process. This could be the case
+			* when primary node fails
+			*/
+		ereport(LOG,
+				(errmsg("conform_children_to_node_failure: total reset requested for node id: %d", failed_node_id)));
+		/*
+		 * if we are using global connection pool, we also need to invalidate
+		 * all pooled connections
+		 */
+		InvalidateAllPooledConnections(NULL);
+		for (i =0; i < pool_config->num_init_children; i++)
+		{
+			ProcessInfo *pi = &process_info[i];
+			if (pi->pid > 0)
+			{
+				child_process_exits(i, pi->pid);
+				kill(pi->pid, SIGQUIT);
+				if (prepare_only)
+					continue;
+				if (max_respawn_children > 0)
+				{
+					pi->pid = fork_a_child(fds, i);
+					pi->start_time = time(NULL);
+					pi->client_connection_count = 0;
+					pi->status = WAIT_FOR_CONNECT;
+					pi->connected = 0;
+					pi->wait_for_connect = 0;
+					pi->pooled_connections = 0;
+					max_respawn_children --;
+				}
+				else
+					pi->pid = 0;
+			}
+		}
+		return;
+	}
+	else
+	{
+		ereport(LOG,
+				(errmsg("conform_children_to_node_failure: partial reset requested for node id: %d", failed_node_id)));
+		InvalidateNodeInPooledConnections(failed_node_id);
+		for (i = 0; i < pool_config->num_init_children; i++)
+		{
+			ProcessInfo* pi = &process_info[i];
+			ConnectionPoolEntry* pool_entry = GetConnectionPoolEntry(pi->pool_id, i);
+			if (pool_entry && pool_entry->endPoint.client_connected)
+			{
+				/* So the child process has an active connection
+				 * See if it is also using the failed node
+				 */
+				if (pool_entry->endPoint.load_balancing_node == failed_node_id)
+				{
+					ereport(LOG,
+							(errmsg("conform_children_to_node_failure: child pid %d needs to restart because pool %d uses backend %d",
+									pi->pid, pi->pool_id, failed_node_id)));
+					child_process_exits(i, pi->pid);
+					kill(pi->pid, SIGQUIT);
+					if (prepare_only)
+						continue;
+					if (max_respawn_children > 0)
+					{
+						pi->pid = fork_a_child(fds, i);
+						pi->start_time = time(NULL);
+						pi->client_connection_count = 0;
+						pi->status = WAIT_FOR_CONNECT;
+						pi->connected = 0;
+						pi->wait_for_connect = 0;
+						pi->pooled_connections = 0;
+						max_respawn_children --;
+					}
+					else
+						pi->pid = 0;
+				}
+			}
+		}
+	}
+}
 /*
  * Kill child process to prepare failover/failback.
  */
 static void
 kill_failover_children(FAILOVER_CONTEXT *failover_context, int node_id)
 {
-	int		i, j, k;
+	int		i;
 	/*
 	 * On 2011/5/2 Tatsuo Ishii says: if mode is streaming replication and
 	 * request is NODE_UP_REQUEST (failback case) we don't need to restart
@@ -4346,6 +4437,14 @@ kill_failover_children(FAILOVER_CONTEXT *failover_context, int node_id)
 	 * requested node id is the former primary node.
 	 *
 	 * See bug 672 for more details.
+	 *
+	 * Muhammad Usama: Instead of main process restarting the children, we
+	 * can offload this decision to individual child process. This will
+	 * allow the child process to restart only if it has a leased connection
+	 * and actively using the failed node. Moreover we can enhance this
+	 * further by allowing the child process to decide if it can live
+	 * without restarting, for example if their is no transaction in progress.
+	 *
 	 */
 	if (STREAM && failover_context->reqkind == NODE_UP_REQUEST && failover_context->all_backend_down == false &&
 		Req_info->primary_node_id >= 0 && Req_info->primary_node_id != node_id)
@@ -4381,64 +4480,21 @@ kill_failover_children(FAILOVER_CONTEXT *failover_context, int node_id)
 
 		failover_context->need_to_restart_children = true;
 		failover_context->partial_restart = true;
+		/*
+		 * We do not need to restart the child process. All we need to do is to
+		 * ask children that are using the failed node to return the pool back to
+		 * gloabl pool
+		 */
 
-		for (i = 0; i < pool_config->num_init_children; i++)
-		{
-			bool		restart = false;
-
-			for (j = 0; j < pool_config->max_pool; j++)
-			{
-				for (k = 0; k < NUM_BACKENDS; k++)
-				{
-					ConnectionInfo *con = pool_coninfo(i, j, k);
-
-					if (con->connected && con->load_balancing_node == node_id)
-					{
-						ereport(LOG,
-								(errmsg("child pid %d needs to restart because pool %d uses backend %d",
-										process_info[i].pid, j, node_id)));
-						restart = true;
-						break;
-					}
-				}
-			}
-
-			if (restart)
-			{
-				pid_t		pid = process_info[i].pid;
-
-				if (pid)
-				{
-					kill(pid, SIGQUIT);
-					ereport(DEBUG1,
-							(errmsg("failover handler"),
-							 errdetail("kill process with PID:%d", pid)));
-				}
-			}
-		}
+		conform_children_to_node_failure(node_id, false, true);
 	}
 	else
 	{
-		ereport(LOG,
-				(errmsg("Restart all children")));
-
-		/* kill all children */
-		for (i = 0; i < pool_config->num_init_children; i++)
-		{
-			pid_t		pid = process_info[i].pid;
-
-			if (pid)
-			{
-				kill(pid, SIGQUIT);
-				ereport(DEBUG1,
-						(errmsg("failover handler"),
-						 errdetail("kill process with PID:%d", pid)));
-			}
-		}
-
 		failover_context->need_to_restart_children = true;
 		failover_context->partial_restart = false;
+		conform_children_to_node_failure(node_id, false, true);
 	}
+
 }
 
 /*
@@ -4664,69 +4720,22 @@ save_node_info(FAILOVER_CONTEXT *failover_context, int new_primary_node_id, int 
 static void
 exec_child_restart(FAILOVER_CONTEXT *failover_context, int node_id)
 {
-	int		i, j, k;
+	int		i;
 
 	if (failover_context->need_to_restart_children)
 	{
-		for (i = 0; i < pool_config->num_init_children; i++)
-		{
-			/*
-			 * Try to kill pgpool child because previous kill signal may
-			 * not be received by pgpool child. This could happen if
-			 * multiple PostgreSQL are going down (or even starting
-			 * pgpool, without starting PostgreSQL can trigger this).
-			 * Child calls degenerate_backend() and it tries to acquire
-			 * semaphore to write a failover request. In this case the
-			 * signal mask is set as well, thus signals are never
-			 * received.
-			 */
-
-			bool		restart = false;
-
-			if (failover_context->partial_restart)
-			{
-				for (j = 0; j < pool_config->max_pool; j++)
-				{
-					for (k = 0; k < NUM_BACKENDS; k++)
-					{
-						ConnectionInfo *con = pool_coninfo(i, j, k);
-
-						if (con->connected && con->load_balancing_node == node_id)
-						{
-
-							ereport(LOG,
-									(errmsg("child pid %d needs to restart because pool %d uses backend %d",
-											process_info[i].pid, j, node_id)));
-							restart = true;
-							break;
-						}
-					}
-				}
-			}
-			else
-				restart = true;
-
-			if (restart)
-			{
-				if (process_info[i].pid)
-				{
-					kill(process_info[i].pid, SIGQUIT);
-
-					process_info[i].pid = fork_a_child(fds, i);
-					process_info[i].start_time = time(NULL);
-					process_info[i].client_connection_count = 0;
-					process_info[i].status = WAIT_FOR_CONNECT;
-					process_info[i].connected = 0;
-					process_info[i].wait_for_connect = 0;
-					process_info[i].pooled_connections = 0;
-
-				}
-			}
-			else
-				process_info[i].need_to_restart = 1;
-		}
+		/*
+		 * Try to kill pgpool child because previous kill signal may
+		 * not be received by pgpool child. This could happen if
+		 * multiple PostgreSQL are going down (or even starting
+		 * pgpool, without starting PostgreSQL can trigger this).
+		 * Child calls degenerate_backend() and it tries to acquire
+		 * semaphore to write a failover request. In this case the
+		 * signal mask is set as well, thus signals are never
+		 * received.
+		 */
+		conform_children_to_node_failure(node_id, !failover_context->partial_restart, false);
 	}
-
 	else
 	{
 		/*
@@ -5145,47 +5154,144 @@ service_child_processes(void)
 static int
 select_victim_processes(int *process_info_idxs, int count)
 {
-		int i, ki;
-		bool found_enough = false;
-		int selected_count = 0;
+	int i, ki;
+	bool found_enough = false;
+	int selected_count = 0;
 
-		if (count <= 0)
-			return 0;
+	if (count <= 0)
+		return 0;
 
-		for (i = 0; i < pool_config->num_init_children; i++)
+	for (i = 0; i < pool_config->num_init_children; i++)
+	{
+		/* Only the child process in waiting for connect can be terminated */
+		if (process_info[i].pid && process_info[i].status == WAIT_FOR_CONNECT)
 		{
-			/* Only the child process in waiting for connect can be terminated */
-			if (process_info[i].pid && process_info[i].status == WAIT_FOR_CONNECT)
+			if (selected_count < count)
 			{
-				if (selected_count < count)
+				process_info_idxs[selected_count++] = i;
+			}
+			else
+			{
+				found_enough = true;
+				/* we don't bother selecting the child having least pooled connection with
+				 * aggressive strategy
+				 */
+				if (pool_config->process_management_strategy != PM_STRATEGY_AGGRESSIVE
+				&& pool_config->connection_pool_type != GLOBAL_CONNECTION_POOL )
 				{
-					process_info_idxs[selected_count++] = i;
-				}
-				else
-				{
-					found_enough = true;
-					/* we don't bother selecting the child having least pooled connection with
-					 * aggressive strategy
-					 */
-					if (pool_config->process_management_strategy != PM_STRATEGY_AGGRESSIVE)
+					for (ki = 0; ki < count; ki++)
 					{
-						for (ki = 0; ki < count; ki++)
+						int old_index = process_info_idxs[ki];
+						if (old_index < 0 || process_info[old_index].pooled_connections > process_info[i].pooled_connections)
 						{
-							int old_index = process_info_idxs[ki];
-							if (old_index < 0 || process_info[old_index].pooled_connections > process_info[i].pooled_connections)
-							{
-								process_info_idxs[ki] = i;
-								found_enough = false;
-								break;
-							}
-							if (process_info[old_index].pooled_connections)
-								found_enough = false;
+							process_info_idxs[ki] = i;
+							found_enough = false;
+							break;
 						}
+						if (process_info[old_index].pooled_connections)
+							found_enough = false;
 					}
 				}
 			}
-			if (found_enough)
-				break;
 		}
+		if (found_enough)
+			break;
+	}
 	return selected_count;
+}
+
+/* Returns true if signal was received while waiting */
+static bool
+handle_child_ipc_requests(void)
+{
+	int		fd_max;
+	int		i;
+	int		select_ret;
+	struct timeval tv;
+	fd_set	rmask;
+	bool	ret = false;
+
+	if (pool_config->connection_pool_type != GLOBAL_CONNECTION_POOL)
+		return true;
+
+	POOL_SETMASK(&UnBlockSig);
+
+	FD_ZERO(&rmask);
+	fd_max = pipe_fds[0];
+
+	/* Just in case we receive some emergency signal */
+	FD_SET(pipe_fds[0], &rmask);
+
+	for (i = 0; i < pool_config->num_init_children; i++)
+	{
+		if (ipc_endpoints[i].child_link > 0 && ipc_endpoints[i].child_pid > 0)
+		{
+			FD_SET(ipc_endpoints[i].child_link, &rmask);
+			if (fd_max < ipc_endpoints[i].child_link)
+				fd_max = ipc_endpoints[i].child_link;
+		}
+	}
+	tv.tv_sec = 2;
+	tv.tv_usec = 0;
+
+	select_ret = select(fd_max + 1, &rmask, NULL, NULL, &tv);
+
+	POOL_SETMASK(&BlockSig);
+
+	if (select_ret > 0)
+	{
+		int reads = 0;
+		if (FD_ISSET(pipe_fds[0], &rmask))
+		{
+			char		dummy;
+			ret = true;
+			if (read(pipe_fds[0], &dummy, 1) < 0)
+				ereport(WARNING,
+					(errmsg("handle_child_ipc_requests: read on pipe failed"),
+					 errdetail("%m")));
+			reads++;
+			if (reads >= select_ret)
+				return ret;
+		}
+		for (i = 0; i < pool_config->num_init_children; i++)
+		{
+			if (ipc_endpoints[i].child_link > 0 && ipc_endpoints[i].child_pid > 0)
+			{
+				if (FD_ISSET(ipc_endpoints[i].child_link, &rmask))
+				{
+					ereport(DEBUG2,
+						(errmsg("IPC end point:%d from child:%d is ready",i, ipc_endpoints[i].child_pid)));
+
+					if (ProcessChildRequestOnMain(&ipc_endpoints[i]) == false)
+						ereport(LOG, (errmsg("failed to process child:%d request on main",ipc_endpoints[i].child_pid)));
+
+					if (reads++ >= select_ret)
+						break;
+				}
+			}
+		}
+	}
+	return ret;
+}
+
+static void
+child_process_exits(int child_id, pid_t child_pid)
+{
+	Assert(child_id >= 0 && child_id < pool_config->num_init_children);
+	Assert(child_pid > 0);
+	if (pool_config->connection_pool_type == GLOBAL_CONNECTION_POOL)
+	{
+		/*
+		 * Inform global connection pool to release
+		 * leased connection (if any) for this child
+		 */
+		GlobalPoolChildProcessDied(child_id, child_pid);
+		/* Close the ipc endpoint for the exited child */
+		if (ipc_endpoints[child_id].child_link > 0)
+			close(ipc_endpoints[child_id].child_link);
+		process_info[child_id].pool_id = -1;
+		ipc_endpoints[child_id].child_link = -1;
+		ipc_endpoints[child_id].child_pid = 0;
+		ipc_endpoints[child_id].proc_info_id = -1;
+	}
 }

@@ -112,14 +112,15 @@ pool_open(int fd, bool backend_connection)
 * close read/write file descriptors.
 */
 void
-pool_close(POOL_CONNECTION * cp)
+pool_close(POOL_CONNECTION * cp, bool close_socket)
 {
 	/*
 	 * shutdown connection to the client so that pgpool is not blocked
 	 */
 	if (!cp->isbackend)
 		shutdown(cp->fd, 1);
-	close(cp->fd);
+	if (close_socket)
+		close(cp->fd);
 	cp->socket_state = POOL_SOCKET_CLOSED;
 	pfree(cp->wbuf);
 	pfree(cp->hp);
@@ -129,7 +130,7 @@ pool_close(POOL_CONNECTION * cp)
 		pfree(cp->buf2);
 	if (cp->buf3)
 		pfree(cp->buf3);
-	pool_discard_params(&cp->params);
+	// pool_discard_params(&cp->params);
 
 	pool_ssl_close(cp);
 
@@ -225,9 +226,9 @@ pool_read(POOL_CONNECTION * cp, void *buf, int len)
 			cp->socket_state = POOL_SOCKET_ERROR;
 			if (cp->isbackend)
 			{
-				if (cp->con_info && cp->con_info->swallow_termination == 1)
+				if (cp->pooled_backend_ref && cp->pooled_backend_ref->swallow_termination)
 				{
-					cp->con_info->swallow_termination = 0;
+					cp->pooled_backend_ref->swallow_termination = false;
 					ereport(FATAL,
 							(errmsg("unable to read data from DB node %d", cp->db_node_id),
 							 errdetail("pg_terminate_backend was called on the backend")));
@@ -381,9 +382,9 @@ pool_read2(POOL_CONNECTION * cp, int len)
 			cp->socket_state = POOL_SOCKET_ERROR;
 			if (cp->isbackend)
 			{
-				if (cp->con_info && cp->con_info->swallow_termination == 1)
+				if (cp->pooled_backend_ref && cp->pooled_backend_ref->swallow_termination)
 				{
-					cp->con_info->swallow_termination = 0;
+					cp->pooled_backend_ref->swallow_termination = false;
 					ereport(FATAL,
 							(errmsg("unable to read data from DB node %d", cp->db_node_id),
 							 errdetail("pg_terminate_backend was called on the backend")));
@@ -738,9 +739,9 @@ pool_flush(POOL_CONNECTION * cp)
 	{
 		if (cp->isbackend)
 		{
-			if (cp->con_info && cp->con_info->swallow_termination == 1)
+			if (cp->pooled_backend_ref && cp->pooled_backend_ref->swallow_termination)
 			{
-				cp->con_info->swallow_termination = 0;
+				cp->pooled_backend_ref->swallow_termination = false;
 				ereport(FATAL,
 						(errmsg("unable to read data from DB node %d", cp->db_node_id),
 						 errdetail("pg_terminate_backend was called on the backend")));
@@ -794,9 +795,9 @@ pool_flush_noerror(POOL_CONNECTION * cp)
 	{
 		if (cp->isbackend)
 		{
-			if (cp->con_info && cp->con_info->swallow_termination == 1)
+			if (cp->pooled_backend_ref && cp->pooled_backend_ref->swallow_termination)
 			{
-				cp->con_info->swallow_termination = 0;
+				cp->pooled_backend_ref->swallow_termination = false;
 				ereport(FATAL,
 						(errmsg("unable to read data from DB node %d", cp->db_node_id),
 						 errdetail("pg_terminate_backend was called on the backend")));
@@ -973,9 +974,9 @@ pool_read_string(POOL_CONNECTION * cp, int *len, int line)
 			cp->socket_state = POOL_SOCKET_ERROR;
 			if (cp->isbackend)
 			{
-				if (cp->con_info && cp->con_info->swallow_termination == 1)
+				if (cp->pooled_backend_ref && cp->pooled_backend_ref->swallow_termination)
 				{
-					cp->con_info->swallow_termination = 0;
+					cp->pooled_backend_ref->swallow_termination = false;
 					ereport(FATAL,
 							(errmsg("unable to read data from DB node %d", cp->db_node_id),
 							 errdetail("pg_terminate_backend was called on the backend")));

@@ -538,7 +538,7 @@ pool_send_and_wait(POOL_QUERY_CONTEXT * query_context,
 {
 	POOL_SESSION_CONTEXT *session_context;
 	POOL_CONNECTION *frontend;
-	POOL_CONNECTION_POOL *backend;
+	BackendClusterConnection *backend;
 	bool		is_commit;
 	bool		is_begin_read_write;
 	int			i;
@@ -660,8 +660,8 @@ pool_send_and_wait(POOL_QUERY_CONTEXT * query_context,
 		wait_for_query_response_with_trans_cleanup(frontend,
 												   CONNECTION(backend, i),
 												   MAJOR(backend),
-												   MAIN_CONNECTION(backend)->pid,
-												   MAIN_CONNECTION(backend)->key);
+												   MAIN_CONNECTION(backend).pid,
+												   MAIN_CONNECTION(backend).key);
 
 		/*
 		 * Check if some error detected.  If so, emit log. This is useful when
@@ -695,7 +695,7 @@ pool_extended_send_and_wait(POOL_QUERY_CONTEXT * query_context,
 {
 	POOL_SESSION_CONTEXT *session_context;
 	POOL_CONNECTION *frontend;
-	POOL_CONNECTION_POOL *backend;
+	BackendClusterConnection *backend;
 	bool		is_commit;
 	bool		is_begin_read_write;
 	int			i;
@@ -877,8 +877,8 @@ pool_extended_send_and_wait(POOL_QUERY_CONTEXT * query_context,
 			wait_for_query_response_with_trans_cleanup(frontend,
 													   CONNECTION(backend, i),
 													   MAJOR(backend),
-													   MAIN_CONNECTION(backend)->pid,
-													   MAIN_CONNECTION(backend)->key);
+													   MAIN_CONNECTION(backend).pid,
+													   MAIN_CONNECTION(backend).key);
 
 			/*
 			 * Check if some error detected.  If so, emit log. This is useful
@@ -1973,7 +1973,7 @@ where_to_send_main_replica(POOL_QUERY_CONTEXT * query_context, char *query, Node
 {
 	POOL_DEST	dest;
 	POOL_SESSION_CONTEXT *session_context;
-	POOL_CONNECTION_POOL *backend;
+	BackendClusterConnection *backend;
 
 	dest = send_to_where(node);
 	session_context = pool_get_session_context(false);
@@ -2179,7 +2179,7 @@ static void
 where_to_send_native_replication(POOL_QUERY_CONTEXT * query_context, char *query, Node *node)
 {
 	POOL_SESSION_CONTEXT *session_context;
-	POOL_CONNECTION_POOL *backend;
+	BackendClusterConnection *backend;
 
 	session_context = pool_get_session_context(false);
 	backend = session_context->backend;

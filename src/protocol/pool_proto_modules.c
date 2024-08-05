@@ -63,6 +63,7 @@
 #include "main/pool_internal_comms.h"
 #include "pool_config_variables.h"
 #include "utils/psqlscan.h"
+#include "connection_pool/connection_pool.h"
 
 char	   *copy_table = NULL;	/* copy table name */
 char	   *copy_schema = NULL; /* copy table name */
@@ -86,27 +87,27 @@ int			is_select_for_update = 0;	/* 1 if SELECT INTO or SELECT FOR
  */
 char		query_string_buffer[QUERY_STRING_BUFFER_LEN];
 
-static int	check_errors(POOL_CONNECTION_POOL * backend, int backend_id);
+static int	check_errors(BackendClusterConnection * backend, int backend_id);
 static void generate_error_message(char *prefix, int specific_error, char *query);
 static POOL_STATUS parse_before_bind(POOL_CONNECTION * frontend,
-									 POOL_CONNECTION_POOL * backend,
+									 BackendClusterConnection * backend,
 									 POOL_SENT_MESSAGE * message,
 									 POOL_SENT_MESSAGE * bind_message);
 static POOL_STATUS send_prepare(POOL_CONNECTION * frontend,
-								POOL_CONNECTION_POOL * backend,
+								BackendClusterConnection * backend,
 								POOL_SENT_MESSAGE * message);
 static int *find_victim_nodes(int *ntuples, int nmembers, int main_node, int *number_of_nodes);
 static POOL_STATUS close_standby_transactions(POOL_CONNECTION * frontend,
-											  POOL_CONNECTION_POOL * backend);
+											  BackendClusterConnection * backend);
 
 static char *flatten_set_variable_args(const char *name, List *args);
 static bool
 			process_pg_terminate_backend_func(POOL_QUERY_CONTEXT * query_context);
 static void pool_discard_except_sync_and_ready_for_query(POOL_CONNECTION * frontend,
-											 POOL_CONNECTION_POOL * backend);
-static void si_get_snapshot(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend, Node *node, bool tstate_check);
+											 BackendClusterConnection * backend);
+static void si_get_snapshot(POOL_CONNECTION * frontend, BackendClusterConnection * backend, Node *node, bool tstate_check);
 
-static bool check_transaction_state_and_abort(char *query, Node *node, POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend);
+static bool check_transaction_state_and_abort(char *query, Node *node, POOL_CONNECTION * frontend, BackendClusterConnection * backend);
 
 static bool multi_statement_query(char *buf);
 
@@ -143,14 +144,13 @@ process_pg_terminate_backend_func(POOL_QUERY_CONTEXT * query_context)
 	 * locate pg_terminate_backend and get the pid argument, if
 	 * pg_terminate_backend is present in the query
 	 */
-	int			backend_pid = pool_get_terminate_backend_pid(query_context->parse_tree);
+	int	backend_pid = pool_get_terminate_backend_pid(query_context->parse_tree);
 
 	if (backend_pid > 0)
 	{
-		int			backend_node = 0;
-		ConnectionInfo *conn = pool_coninfo_backend_pid(backend_pid, &backend_node);
-
-		if (conn == NULL)
+		int	backend_node = -1;
+		PooledBackendNodeConnection *backend_connection = GetBackendNodeConnectionForBackendPID(backend_pid, &backend_node);
+		if (backend_connection == NULL)
 		{
 			ereport(LOG,
 					(errmsg("found the pg_terminate_backend request for backend pid:%d, but the backend connection does not belong to pgpool-II", backend_pid)));
@@ -162,17 +162,18 @@ process_pg_terminate_backend_func(POOL_QUERY_CONTEXT * query_context)
 			return false;
 		}
 		ereport(LOG,
-				(errmsg("found the pg_terminate_backend request for backend pid:%d on backend node:%d", backend_pid, backend_node),
+				(errmsg("found the pg_terminate_backend request for backend pid:%d", backend_pid),
 				 errdetail("setting the connection flag")));
 
-		pool_set_connection_will_be_terminated(conn);
+		pool_set_connection_will_be_terminated(backend_connection);
 
 		/*
 		 * It was the pg_terminate_backend call so send the query to
 		 * appropriate backend
 		 */
-		query_context->pg_terminate_backend_conn = conn;
-		pool_force_query_node_to_backend(query_context, backend_node);
+		query_context->pg_terminate_backend_conn = backend_connection;
+		if (backend_node >= 0)
+			pool_force_query_node_to_backend(query_context, backend_node);
 		return true;
 	}
 	return false;
@@ -185,7 +186,7 @@ process_pg_terminate_backend_func(POOL_QUERY_CONTEXT * query_context)
  */
 POOL_STATUS
 SimpleQuery(POOL_CONNECTION * frontend,
-			POOL_CONNECTION_POOL * backend, int len, char *contents)
+			BackendClusterConnection * backend, int len, char *contents)
 {
 	static char *sq_config = "pool_status";
 	static char *sq_pools = "pool_pools";
@@ -908,7 +909,7 @@ SimpleQuery(POOL_CONNECTION * frontend,
  * process EXECUTE (V3 only)
  */
 POOL_STATUS
-Execute(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend,
+Execute(POOL_CONNECTION * frontend, BackendClusterConnection * backend,
 		int len, char *contents)
 {
 	int			commit = 0;
@@ -1221,7 +1222,7 @@ Execute(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend,
  * process Parse (V3 only)
  */
 POOL_STATUS
-Parse(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend,
+Parse(POOL_CONNECTION * frontend, BackendClusterConnection * backend,
 	  int len, char *contents)
 {
 	int			deadlock_detected = 0;
@@ -1600,7 +1601,7 @@ Parse(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend,
 }
 
 POOL_STATUS
-Bind(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend,
+Bind(POOL_CONNECTION * frontend, BackendClusterConnection * backend,
 	 int len, char *contents)
 {
 	char	   *pstmt_name;
@@ -1762,7 +1763,7 @@ Bind(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend,
 }
 
 POOL_STATUS
-Describe(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend,
+Describe(POOL_CONNECTION * frontend, BackendClusterConnection * backend,
 		 int len, char *contents)
 {
 	POOL_SENT_MESSAGE *msg;
@@ -1855,7 +1856,7 @@ Describe(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend,
 
 
 POOL_STATUS
-Close(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend,
+Close(POOL_CONNECTION * frontend, BackendClusterConnection * backend,
 	  int len, char *contents)
 {
 	POOL_SENT_MESSAGE *msg;
@@ -1986,7 +1987,7 @@ Close(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend,
 
 
 POOL_STATUS
-FunctionCall3(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend,
+FunctionCall3(POOL_CONNECTION * frontend, BackendClusterConnection * backend,
 			  int len, char *contents)
 {
 	/*
@@ -2018,7 +2019,7 @@ FunctionCall3(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend,
  */
 POOL_STATUS
 ReadyForQuery(POOL_CONNECTION * frontend,
-			  POOL_CONNECTION_POOL * backend, bool send_ready, bool cache_commit)
+			  BackendClusterConnection * backend, bool send_ready, bool cache_commit)
 {
 	int			i;
 	int			len;
@@ -2355,21 +2356,21 @@ ReadyForQuery(POOL_CONNECTION * frontend,
  * Close running transactions on standbys.
  */
 static POOL_STATUS close_standby_transactions(POOL_CONNECTION * frontend,
-											  POOL_CONNECTION_POOL * backend)
+											  BackendClusterConnection * backend)
 {
 	int			i;
 
 	for (i = 0; i < NUM_BACKENDS; i++)
 	{
-		if (CONNECTION_SLOT(backend, i) &&
+		if (&CONNECTION_SLOT(backend, i) &&
 			TSTATE(backend, i) == 'T' &&
 			BACKEND_INFO(i).backend_status == CON_UP &&
 			(MAIN_REPLICA ? PRIMARY_NODE_ID : REAL_MAIN_NODE_ID) != i)
 		{
 			per_node_statement_log(backend, i, "COMMIT");
 			if (do_command(frontend, CONNECTION(backend, i), "COMMIT", MAJOR(backend),
-						   MAIN_CONNECTION(backend)->pid,
-						   MAIN_CONNECTION(backend)->key, 0) != POOL_CONTINUE)
+						   MAIN_CONNECTION(backend).pid,
+						   MAIN_CONNECTION(backend).key, 0) != POOL_CONTINUE)
 				ereport(ERROR,
 						(errmsg("unable to close standby transactions"),
 						 errdetail("do_command returned DEADLOCK status")));
@@ -2379,7 +2380,7 @@ static POOL_STATUS close_standby_transactions(POOL_CONNECTION * frontend,
 }
 
 POOL_STATUS
-ParseComplete(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend)
+ParseComplete(POOL_CONNECTION * frontend, BackendClusterConnection * backend)
 {
 	POOL_SESSION_CONTEXT *session_context;
 
@@ -2403,7 +2404,7 @@ ParseComplete(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend)
 }
 
 POOL_STATUS
-BindComplete(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend)
+BindComplete(POOL_CONNECTION * frontend, BackendClusterConnection * backend)
 {
 	POOL_SESSION_CONTEXT *session_context;
 
@@ -2427,7 +2428,7 @@ BindComplete(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend)
 }
 
 POOL_STATUS
-CloseComplete(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend)
+CloseComplete(POOL_CONNECTION * frontend, BackendClusterConnection * backend)
 {
 	POOL_SESSION_CONTEXT *session_context;
 	POOL_STATUS status;
@@ -2502,7 +2503,7 @@ CloseComplete(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend)
 
 POOL_STATUS
 ParameterDescription(POOL_CONNECTION * frontend,
-					 POOL_CONNECTION_POOL * backend)
+					 BackendClusterConnection * backend)
 {
 	int			len,
 				len1 = 0;
@@ -2586,7 +2587,7 @@ ParameterDescription(POOL_CONNECTION * frontend,
 
 POOL_STATUS
 ErrorResponse3(POOL_CONNECTION * frontend,
-			   POOL_CONNECTION_POOL * backend)
+			   BackendClusterConnection * backend)
 {
 	POOL_STATUS ret;
 
@@ -2602,7 +2603,7 @@ ErrorResponse3(POOL_CONNECTION * frontend,
 
 POOL_STATUS
 FunctionCall(POOL_CONNECTION * frontend,
-			 POOL_CONNECTION_POOL * backend)
+			 BackendClusterConnection * backend)
 {
 	char		dummy[2];
 	int			oid;
@@ -2698,7 +2699,7 @@ FunctionCall(POOL_CONNECTION * frontend,
 
 POOL_STATUS
 ProcessFrontendResponse(POOL_CONNECTION * frontend,
-						POOL_CONNECTION_POOL * backend)
+						BackendClusterConnection * backend)
 {
 	char		fkind;
 	char	   *bufp = NULL;
@@ -2957,7 +2958,7 @@ ProcessFrontendResponse(POOL_CONNECTION * frontend,
 
 POOL_STATUS
 ProcessBackendResponse(POOL_CONNECTION * frontend,
-					   POOL_CONNECTION_POOL * backend,
+					   BackendClusterConnection * backend,
 					   int *state, short *num_fields)
 {
 	int			status = POOL_CONTINUE;
@@ -3276,7 +3277,7 @@ ProcessBackendResponse(POOL_CONNECTION * frontend,
 
 POOL_STATUS
 CopyInResponse(POOL_CONNECTION * frontend,
-			   POOL_CONNECTION_POOL * backend)
+			   BackendClusterConnection * backend)
 {
 	POOL_STATUS status;
 
@@ -3295,7 +3296,7 @@ CopyInResponse(POOL_CONNECTION * frontend,
 
 POOL_STATUS
 CopyOutResponse(POOL_CONNECTION * frontend,
-				POOL_CONNECTION_POOL * backend)
+				BackendClusterConnection * backend)
 {
 	POOL_STATUS status;
 
@@ -3314,7 +3315,7 @@ CopyOutResponse(POOL_CONNECTION * frontend,
 
 POOL_STATUS
 CopyDataRows(POOL_CONNECTION * frontend,
-			 POOL_CONNECTION_POOL * backend, int copyin)
+			 BackendClusterConnection * backend, int copyin)
 {
 	char	   *string = NULL;
 	int			len;
@@ -3480,7 +3481,7 @@ CopyDataRows(POOL_CONNECTION * frontend,
  * transaction state.
  */
 void
-raise_intentional_error_if_need(POOL_CONNECTION_POOL * backend)
+raise_intentional_error_if_need(BackendClusterConnection * backend)
 {
 	int			i;
 	POOL_SESSION_CONTEXT *session_context;
@@ -3561,7 +3562,7 @@ raise_intentional_error_if_need(POOL_CONNECTION_POOL * backend)
  *---------------------------------------------------
  */
 static int
-check_errors(POOL_CONNECTION_POOL * backend, int backend_id)
+check_errors(BackendClusterConnection * backend, int backend_id)
 {
 
 	/*
@@ -3661,20 +3662,18 @@ generate_error_message(char *prefix, int specific_error, char *query)
  * Make per DB node statement log
  */
 void
-per_node_statement_log(POOL_CONNECTION_POOL * backend, int node_id, char *query)
+per_node_statement_log(BackendClusterConnection * backend, int node_id, char *query)
 {
-	POOL_CONNECTION_POOL_SLOT *slot = backend->slots[node_id];
-
 	if (pool_config->log_per_node_statement)
 		ereport(LOG,
-				(errmsg("DB node id: %d backend pid: %d statement: %s", node_id, ntohl(slot->pid), query)));
+				(errmsg("DB node id: %d backend pid: %d statement: %s", node_id, ntohl(backend->slots[node_id].pid), query)));
 }
 
 /*
  * Make per DB node statement notice message
  */
 void
-per_node_statement_notice(POOL_CONNECTION_POOL * backend, int node_id, char *query)
+per_node_statement_notice(BackendClusterConnection * backend, int node_id, char *query)
 {
 	if (pool_config->notice_per_node_statement)
 		ereport(NOTICE,
@@ -3687,9 +3686,8 @@ per_node_statement_notice(POOL_CONNECTION_POOL * backend, int node_id, char *que
  * All data read in this function is returned to stream.
  */
 char
-per_node_error_log(POOL_CONNECTION_POOL * backend, int node_id, char *query, char *prefix, bool unread)
+per_node_error_log(BackendClusterConnection * backend, int node_id, char *query, char *prefix, bool unread)
 {
-	POOL_CONNECTION_POOL_SLOT *slot = backend->slots[node_id];
 	char	   *message;
 	char	   kind;
 
@@ -3705,7 +3703,7 @@ per_node_error_log(POOL_CONNECTION_POOL * backend, int node_id, char *query, cha
 	{
 		ereport(LOG,
 				(errmsg("%s: DB node id: %d backend pid: %d statement: \"%s\" message: \"%s\"",
-						prefix, node_id, ntohl(slot->pid), query, message)));
+						prefix, node_id, ntohl(backend->slots[node_id].pid), query, message)));
 		pfree(message);
 	}
 	return kind;
@@ -3717,7 +3715,7 @@ per_node_error_log(POOL_CONNECTION_POOL * backend, int node_id, char *query, cha
  * node. Caller must provide the parse message data as "message".
  */
 static POOL_STATUS parse_before_bind(POOL_CONNECTION * frontend,
-									 POOL_CONNECTION_POOL * backend,
+									 BackendClusterConnection * backend,
 									 POOL_SENT_MESSAGE * message,
 									 POOL_SENT_MESSAGE * bind_message)
 {
@@ -3884,7 +3882,7 @@ static POOL_STATUS parse_before_bind(POOL_CONNECTION * frontend,
  * argument.
  */
 static POOL_STATUS send_prepare(POOL_CONNECTION * frontend,
-								POOL_CONNECTION_POOL * backend,
+								BackendClusterConnection * backend,
 								POOL_SENT_MESSAGE * message)
 {
 	int			node_id;
@@ -4179,7 +4177,7 @@ flatten_set_variable_args(const char *name, List *args)
  * Wait till ready for query received.
  */
 static void
-pool_wait_till_ready_for_query(POOL_CONNECTION_POOL * backend)
+pool_wait_till_ready_for_query(BackendClusterConnection * backend)
 {
 	char		kind;
 	int			len;
@@ -4228,7 +4226,7 @@ pool_wait_till_ready_for_query(POOL_CONNECTION_POOL * backend)
  */
 static void
 pool_discard_except_sync_and_ready_for_query(POOL_CONNECTION * frontend,
-											 POOL_CONNECTION_POOL * backend)
+											 BackendClusterConnection * backend)
 {
 	POOL_PENDING_MESSAGE *pmsg;
 	int			i;
@@ -4337,7 +4335,7 @@ pool_discard_except_sync_and_ready_for_query(POOL_CONNECTION * frontend,
  * Preconditions: query is in progress. The command is succeeded.
  */
 void
-pool_at_command_success(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend)
+pool_at_command_success(POOL_CONNECTION * frontend, BackendClusterConnection * backend)
 {
 	Node	   *node;
 	char	   *query;
@@ -4465,7 +4463,7 @@ pool_at_command_success(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backe
  * read message length (V3 only)
  */
 int
-pool_read_message_length(POOL_CONNECTION_POOL * cp)
+pool_read_message_length(BackendClusterConnection * cp)
 {
 	int			length,
 				length0;
@@ -4517,7 +4515,7 @@ pool_read_message_length(POOL_CONNECTION_POOL * cp)
  * The array is in the static storage, thus it will be destroyed by subsequent calls.
  */
 int *
-pool_read_message_length2(POOL_CONNECTION_POOL * cp)
+pool_read_message_length2(BackendClusterConnection * cp)
 {
 	int			length,
 				length0;
@@ -4601,7 +4599,7 @@ pool_emit_log_for_message_length_diff(int *length_array, char *name)
 }
 
 signed char
-pool_read_kind(POOL_CONNECTION_POOL * cp)
+pool_read_kind(BackendClusterConnection * cp)
 {
 	char		kind0,
 				kind;
@@ -4658,7 +4656,7 @@ pool_read_kind(POOL_CONNECTION_POOL * cp)
 }
 
 int
-pool_read_int(POOL_CONNECTION_POOL * cp)
+pool_read_int(BackendClusterConnection * cp)
 {
 	int			data0,
 				data;
@@ -4698,7 +4696,7 @@ pool_read_int(POOL_CONNECTION_POOL * cp)
  * In case of starting an internal transaction, this should be false.
  */
 static void
-si_get_snapshot(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend, Node * node, bool tstate_check)
+si_get_snapshot(POOL_CONNECTION * frontend, BackendClusterConnection * backend, Node * node, bool tstate_check)
 {
 	POOL_SESSION_CONTEXT *session_context;
 
@@ -4759,7 +4757,7 @@ si_get_snapshot(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend, Node
  */
 static bool
 check_transaction_state_and_abort(char *query, Node *node, POOL_CONNECTION * frontend,
-								  POOL_CONNECTION_POOL * backend)
+								  BackendClusterConnection * backend)
 {
 	int		len;
 

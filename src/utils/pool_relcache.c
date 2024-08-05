@@ -105,7 +105,7 @@ pool_discard_relcache(POOL_RELCACHE * relcache)
  * If not found in cache, do the query and store the result into cache and return it.
  */
 void *
-pool_search_relcache(POOL_RELCACHE * relcache, POOL_CONNECTION_POOL * backend, char *table)
+pool_search_relcache(POOL_RELCACHE * relcache, BackendClusterConnection * backend, char *table)
 {
 	char	   *dbname;
 	int			i;
@@ -145,14 +145,14 @@ pool_search_relcache(POOL_RELCACHE * relcache, POOL_CONNECTION_POOL * backend, c
 	 */
 	if (pool_config->relcache_query_target == RELQTARGET_LOAD_BALANCE_NODE &&
 		session_context && VALID_BACKEND_RAW(session_context->load_balance_node_id) &&
-		backend->slots[session_context->load_balance_node_id])
+		&backend->slots[session_context->load_balance_node_id])
 	{
-		dbname = backend->slots[session_context->load_balance_node_id]->sp->database;
+		dbname = backend->sp->database;
 		node_id = session_context->load_balance_node_id;
 	}
 	else
 	{
-		dbname = MAIN_CONNECTION(backend)->sp->database;
+		dbname = backend->sp->database;
 
 		/*
 		 * If in streaming replication mode, prefer to send query to the

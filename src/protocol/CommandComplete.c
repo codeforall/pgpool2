@@ -40,13 +40,13 @@
 #include "utils/pool_stream.h"
 
 static int	extract_ntuples(char *message);
-static POOL_STATUS handle_mismatch_tuples(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend, char *packet, int packetlen, bool command_complete);
+static POOL_STATUS handle_mismatch_tuples(POOL_CONNECTION * frontend, BackendClusterConnection * backend, char *packet, int packetlen, bool command_complete);
 static int	forward_command_complete(POOL_CONNECTION * frontend, char *packet, int packetlen);
 static int	forward_empty_query(POOL_CONNECTION * frontend, char *packet, int packetlen);
 static int	forward_packet_to_frontend(POOL_CONNECTION * frontend, char kind, char *packet, int packetlen);
 
 POOL_STATUS
-CommandComplete(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend, bool command_complete)
+CommandComplete(POOL_CONNECTION * frontend, BackendClusterConnection * backend, bool command_complete)
 {
 	int			len,
 				len1;
@@ -280,7 +280,7 @@ CommandComplete(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend, bool
  * Handle misc process which is necessary when query context exists.
  */
 void
-handle_query_context(POOL_CONNECTION_POOL * backend)
+handle_query_context(BackendClusterConnection * backend)
 {
 	POOL_SESSION_CONTEXT *session_context;
 	Node	   *node;
@@ -460,7 +460,7 @@ extract_ntuples(char *message)
 /*
  * Handle mismatch tuples
  */
-static POOL_STATUS handle_mismatch_tuples(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend, char *packet, int packetlen, bool command_complete)
+static POOL_STATUS handle_mismatch_tuples(POOL_CONNECTION * frontend, BackendClusterConnection * backend, char *packet, int packetlen, bool command_complete)
 {
 	POOL_SESSION_CONTEXT *session_context;
 

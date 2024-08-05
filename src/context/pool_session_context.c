@@ -52,12 +52,11 @@ static int	Elevel = DEBUG2;
  * Initialize per session context
  */
 void
-pool_init_session_context(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend)
+pool_init_session_context(POOL_CONNECTION * frontend, BackendClusterConnection * backend)
 {
 	session_context = &session_context_d;
 	ProcessInfo *process_info;
 	int			node_id;
-	int			i;
 
 	/* Clear session context memory */
 	memset(&session_context_d, 0, sizeof(session_context_d));
@@ -107,11 +106,7 @@ pool_init_session_context(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * bac
 
 	session_context->load_balance_node_id = node_id;
 
-	for (i = 0; i < NUM_BACKENDS; i++)
-	{
-		pool_coninfo(session_context->process_context->proc_id,
-					 pool_pool_index(), i)->load_balancing_node = node_id;
-	}
+	backend->backend_end_point->load_balancing_node = node_id;
 
 	ereport(DEBUG5,
 			(errmsg("initializing session context"),
@@ -200,6 +195,28 @@ pool_session_context_destroy(void)
 	session_context = NULL;
 }
 
+void
+pool_select_new_load_balance_node(bool noerror)
+{
+	POOL_SESSION_CONTEXT *session_context = pool_get_session_context(noerror);
+	if (session_context)
+	{
+		int node_id;
+		PooledBackendClusterConnection *backend_end_point = GetCurrentPooledBackendClusterConnection();
+		if (!RAW_MODE && pool_config->load_balance_mode)
+		{
+			node_id = select_load_balancing_node();
+		}
+		else
+		{
+			node_id = SL_MODE ? PRIMARY_NODE_ID : MAIN_NODE_ID;
+		}
+
+		session_context->load_balance_node_id = node_id;
+		if (backend_end_point)
+			backend_end_point->load_balancing_node = node_id;
+	}
+}
 /*
  * Return session context
  */

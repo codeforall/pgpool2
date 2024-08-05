@@ -26,7 +26,8 @@
 #ifndef POOL_LOBJ_H
 #define POOL_LOBJ_H
 #include "pool.h"
+#include "connection_pool/backend_connection.h"
 
-extern char *pool_rewrite_lo_creat(char kind, char *packet, int packet_len, POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend, int *len);
+extern char *pool_rewrite_lo_creat(char kind, char *packet, int packet_len, POOL_CONNECTION * frontend, BackendClusterConnection * backend, int *len);
 
 #endif							/* POOL_LOBJ_H */

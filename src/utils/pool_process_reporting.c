@@ -21,6 +21,7 @@
  * Process pgPool-II "SHOW" queries.
  */
 #include "pool.h"
+#include "utils/pool_process_reporting.h"
 #include "main/health_check.h"
 #include "protocol/pool_proto_modules.h"
 #include "protocol/pool_process_query.h"
@@ -37,16 +38,18 @@
 #include <time.h>
 #include <netinet/in.h>
 
-static void send_row_description_and_data_rows(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend,
+static void send_row_description_and_data_rows(POOL_CONNECTION * frontend, BackendClusterConnection * backend,
 											   short num_fields, char **field_names, int *offsettbl,
 											   char *data, int row_size, int nrows);
 static void write_one_field(POOL_CONNECTION * frontend, char *field);
 static void write_one_field_v2(POOL_CONNECTION * frontend, char *field);
 static char *db_node_status(int node);
 static char *db_node_role(int node);
+static int add_pool_entry_info_to_report(POOL_REPORT_POOLS *pools, int start_line, ConnectionPoolEntry *pool_entry);
+
 
 void
-send_row_description(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend,
+send_row_description(POOL_CONNECTION * frontend, BackendClusterConnection * backend,
 					 short num_fields, char **field_names)
 {
 	static char *cursorname = "blank";
@@ -124,7 +127,7 @@ send_row_description(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend,
  * to the command complete message.
  */
 void
-send_complete_and_ready(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend, const char *message, const int num_rows)
+send_complete_and_ready(POOL_CONNECTION * frontend, BackendClusterConnection * backend, const char *message, const int num_rows)
 {
 	int			len;
 	int			msg_len;
@@ -362,6 +365,16 @@ get_config(int *nrows)
 	StrNCpy(status[i].name, "max_pool", POOLCONFIG_MAXNAMELEN);
 	snprintf(status[i].value, POOLCONFIG_MAXVALLEN, "%d", pool_config->max_pool);
 	StrNCpy(status[i].desc, "max # of connection pool per child", POOLCONFIG_MAXDESCLEN);
+	i++;
+
+	StrNCpy(status[i].name, "max_pool_size", POOLCONFIG_MAXNAMELEN);
+	snprintf(status[i].value, POOLCONFIG_MAXVALLEN, "%d", pool_config->max_pool_size);
+	StrNCpy(status[i].desc, "max # of global connection pools", POOLCONFIG_MAXDESCLEN);
+	i++;
+
+	StrNCpy(status[i].name, "connection_pool_type", POOLCONFIG_MAXNAMELEN);
+	snprintf(status[i].value, POOLCONFIG_MAXVALLEN, "%d", pool_config->connection_pool_type);
+	StrNCpy(status[i].desc, "connection pool type", POOLCONFIG_MAXDESCLEN);
 	i++;
 
 	StrNCpy(status[i].name, "process_management_mode", POOLCONFIG_MAXNAMELEN);
@@ -1199,7 +1212,7 @@ get_config(int *nrows)
 }
 
 void
-send_config_var_detail_row(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend, const char *name, const char *value, const char *description)
+send_config_var_detail_row(POOL_CONNECTION * frontend, BackendClusterConnection * backend, const char *name, const char *value, const char *description)
 {
 	int			size;
 	int			hsize;
@@ -1262,7 +1275,7 @@ send_config_var_detail_row(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * ba
 }
 
 void
-send_config_var_value_only_row(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend, const char *value)
+send_config_var_value_only_row(POOL_CONNECTION * frontend, BackendClusterConnection * backend, const char *value)
 {
 	int			size;
 	int			hsize;
@@ -1304,7 +1317,7 @@ send_config_var_value_only_row(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL 
 }
 
 void
-config_reporting(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend)
+config_reporting(POOL_CONNECTION * frontend, BackendClusterConnection * backend)
 {
 	static char *field_names[] = {"item", "value", "description"};
 	static unsigned char nullmap[2] = {0xff, 0xff};
@@ -1474,7 +1487,7 @@ get_nodes(int *nrows, int node_id)
  * SHOW pool_nodes;
  */
 void
-nodes_reporting(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend)
+nodes_reporting(POOL_CONNECTION * frontend, BackendClusterConnection * backend)
 {
 	static char *field_names[] = {"node_id", "hostname", "port", "status", "pg_status", "lb_weight", "role",
 								  "pg_role", "select_cnt", "load_balance_node", "replication_delay",
@@ -1510,190 +1523,198 @@ nodes_reporting(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend)
 	pfree(nodes);
 }
 
+static int
+add_pool_entry_info_to_report(POOL_REPORT_POOLS *pools, int start_line, ConnectionPoolEntry *pool_entry)
+{
+	int backend_id;
+	int lines = start_line;
+	int idle_duration = 0; // TODO pi->connection_info[pool * MAX_NUM_BACKENDS].client_idle_duration;
+	int cliet_idle_time = pool_config->client_idle_limit;
+	bool is_pool_empty = false;
+	char proc_start_time[POOLCONFIG_MAXDATELEN + 1];
 
+	ProcessInfo *pi = NULL;
+	Assert(pool_entry);
+
+	if (pool_config->connection_pool_type == CLASSIC_CONNECTION_POOL)
+	{
+		/* If the pool belongs to child that does not exists. No point in
+		 * adding it to info
+		 */
+		if (pool_entry->child_id < 0)
+			return 0;
+		pi = &process_info[pool_entry->child_id];
+		if (pi->pid <= 0)
+			return 0;
+	}
+	else if (pool_entry->child_id > 0)
+		pi = &process_info[pool_entry->child_id];
+
+	if (pi && pi->start_time)
+	{
+		if (pool_config->child_life_time > 0)
+		{
+			char temp_proc_start_time[POOLCONFIG_MAXDATELEN + 1];
+			int wait_for_connect_time = pool_config->child_life_time - pi->wait_for_connect;
+
+			strftime(temp_proc_start_time, sizeof(temp_proc_start_time),
+					 "%Y-%m-%d %H:%M:%S", localtime(&pi->start_time));
+			snprintf(proc_start_time, sizeof(proc_start_time),
+					 "%s (%d:%02d before process restarting)", temp_proc_start_time,
+					 wait_for_connect_time / 60,
+					 wait_for_connect_time % 60);
+		}
+		else
+		{
+			strftime(proc_start_time, sizeof(proc_start_time),
+					 "%Y-%m-%d %H:%M:%S", localtime(&pi->start_time));
+		}
+	}
+	else
+		snprintf(proc_start_time, sizeof(proc_start_time),
+				 "not attached to a process");
+
+	if (strlen(pool_entry->endPoint.database) == 0)
+		is_pool_empty = true;
+
+	if (pool_config->client_idle_limit > 0)
+	{
+		cliet_idle_time = pool_config->client_idle_limit - idle_duration;
+	}
+
+	for (backend_id = 0; backend_id < NUM_BACKENDS; backend_id++)
+	{
+		if (pool_entry->child_pid > 0)
+			snprintf(pools[lines].pool_pid, sizeof(pools[lines].pool_pid), "%d", pool_entry->child_pid);
+		else
+			snprintf(pools[lines].pool_pid, sizeof(pools[lines].pool_pid), "%s", "N/A");
+
+		memcpy(pools[lines].process_start_time, proc_start_time, sizeof(pools[lines].process_start_time));
+
+		snprintf(pools[lines].pool_id, sizeof(pools[lines].pool_id), "%d", pool_entry->pool_id);
+
+		snprintf(pools[lines].backend_id, sizeof(pools[lines].backend_id), "%d", backend_id);
+
+		snprintf(pools[lines].client_connection_count, sizeof(pools[lines].client_connection_count),
+					"%d", pool_entry->endPoint.client_connection_count);
+
+		if (pool_entry->endPoint.client_connection_time == 0)
+		{
+			*(pools[lines].client_connection_time) = '\0';
+		}
+		else
+		{
+			strftime(pools[lines].client_connection_time, sizeof(pools[lines].client_connection_time),
+						"%Y-%m-%d %H:%M:%S", localtime(&pool_entry->endPoint.client_connection_time));
+		}
+
+		if (pool_entry->endPoint.client_disconnection_time == 0)
+		{
+			*(pools[lines].client_disconnection_time) = '\0';
+		}
+		else
+		{
+			strftime(pools[lines].client_disconnection_time, sizeof(pools[lines].client_disconnection_time),
+						"%Y-%m-%d %H:%M:%S", localtime(&pool_entry->endPoint.client_disconnection_time));
+		}
+
+		if ((pool_config->client_idle_limit > 0) && pi)
+		{
+			snprintf(pools[lines].client_idle_duration, sizeof(pools[lines].client_idle_duration),
+						"%d (%d:%02d before client disconnected)", idle_duration,
+						cliet_idle_time / 60,
+						cliet_idle_time % 60);
+		}
+		else
+			snprintf(pools[lines].client_idle_duration, sizeof(pools[lines].client_idle_duration),
+						"%d", idle_duration);
+
+		if (is_pool_empty)
+		{
+			StrNCpy(pools[lines].database, "", POOLCONFIG_MAXIDENTLEN);
+			StrNCpy(pools[lines].username, "", POOLCONFIG_MAXIDENTLEN);
+			*(pools[lines].backend_connection_time) = '\0';
+			snprintf(pools[lines].pool_majorversion, sizeof(pools[lines].pool_majorversion), "%d", 0);
+			snprintf(pools[lines].pool_minorversion, sizeof(pools[lines].pool_minorversion), "%d", 0);
+
+			snprintf(pools[lines].pool_counter, sizeof(pools[lines].pool_counter), "%d", 0);
+			snprintf(pools[lines].pool_backendpid, sizeof(pools[lines].pool_backendpid), "%d",0);
+			snprintf(pools[lines].pool_connected, sizeof(pools[lines].pool_connected), "%d", 0);
+		}
+		else
+		{
+			StrNCpy(pools[lines].database, pool_entry->endPoint.database, POOLCONFIG_MAXIDENTLEN);
+			StrNCpy(pools[lines].username, pool_entry->endPoint.user, POOLCONFIG_MAXIDENTLEN);
+			strftime(pools[lines].backend_connection_time, sizeof(pools[lines].backend_connection_time),
+						"%Y-%m-%d %H:%M:%S", localtime(&pool_entry->endPoint.conn_slots[backend_id].create_time));
+			snprintf(pools[lines].pool_majorversion, sizeof(pools[lines].pool_majorversion), "%d",
+						3);
+			snprintf(pools[lines].pool_minorversion, sizeof(pools[lines].pool_minorversion), "%d",
+						0);
+			snprintf(pools[lines].pool_counter, sizeof(pools[lines].pool_counter), "%d",
+					pool_entry->endPoint.conn_slots[backend_id].counter);
+			snprintf(pools[lines].pool_backendpid, sizeof(pools[lines].pool_backendpid), "%d",
+					ntohl(pool_entry->endPoint.conn_slots[backend_id].pid));
+			snprintf(pools[lines].pool_connected, sizeof(pools[lines].pool_connected), "%d", pi ? pi->connected : 0);
+		}
+
+		if (!pi)
+			StrNCpy(pools[lines].status, "Pool not leased", POOLCONFIG_MAXPROCESSSTATUSLEN);
+		else
+		{
+			switch (pi->status)
+			{
+			case WAIT_FOR_CONNECT:
+				StrNCpy(pools[lines].status, "Wait for connection", POOLCONFIG_MAXPROCESSSTATUSLEN);
+				break;
+			case COMMAND_EXECUTE:
+				StrNCpy(pools[lines].status, "Execute command", POOLCONFIG_MAXPROCESSSTATUSLEN);
+				break;
+			case IDLE:
+				StrNCpy(pools[lines].status, "Idle", POOLCONFIG_MAXPROCESSSTATUSLEN);
+				break;
+			case IDLE_IN_TRANS:
+				StrNCpy(pools[lines].status, "Idle in transaction", POOLCONFIG_MAXPROCESSSTATUSLEN);
+				break;
+			case CONNECTING:
+				StrNCpy(pools[lines].status, "Connecting", POOLCONFIG_MAXPROCESSSTATUSLEN);
+				break;
+			default:
+				*(pools[lines].status) = '\0';
+			}
+		}
+		if (is_pool_empty)
+			StrNCpy(pools[lines].load_balance_node, "N/A", POOLCONFIG_MAXPROCESSSTATUSLEN);
+		else if (pi && backend_id == pool_entry->endPoint.load_balancing_node)
+			StrNCpy(pools[lines].load_balance_node, "1", POOLCONFIG_MAXPROCESSSTATUSLEN);
+		else
+			StrNCpy(pools[lines].load_balance_node, "0", POOLCONFIG_MAXPROCESSSTATUSLEN);
+		lines++;
+	}
+	return lines - start_line;
+}
 /*
  * Used by pcp_proc_info and SHOW pool_pools
  */
 POOL_REPORT_POOLS *
 get_pools(int *nrows)
 {
-	int			child,
-				pool,
-				poolBE,
-				backend_id;
+	int	pool_id;
+	int	lines = 0;
+	POOL_REPORT_POOLS *pools = palloc0(GetPoolEntriesCount() *NUM_BACKENDS * sizeof(POOL_REPORT_POOLS));
 
-	ProcessInfo *pi = NULL;
-	int			proc_id;
-
-	int			lines = 0;
-
-	POOL_REPORT_POOLS *pools = palloc0(
-		pool_config->num_init_children * pool_config->max_pool * NUM_BACKENDS * sizeof(POOL_REPORT_POOLS)
-	);
-
-	for (child = 0; child < pool_config->num_init_children; child++)
+	for (pool_id = 0; pool_id < GetPoolEntriesCount(); pool_id++)
 	{
-		int exist_live_connection = 0;
-
-		pi = &process_info[child];
-		proc_id = pi->pid;
-
-		for (pool = 0; pool < pool_config->max_pool; pool++)
-		{
-			poolBE = pool * MAX_NUM_BACKENDS;
-			if (pi->connection_info[poolBE].connected)
-			{
-				exist_live_connection = 1;
-				break;
-			}
-		}
-
-
-		for (pool = 0; pool < pool_config->max_pool; pool++)
-		{
-			int idle_duration = pi->connection_info[pool * MAX_NUM_BACKENDS].client_idle_duration;
-			int load_balancing_node_id = pi->connection_info[pool * MAX_NUM_BACKENDS].load_balancing_node;
-			int client_idle_time = pool_config->client_idle_limit;
-
-			if (pool_config->client_idle_limit > 0)
-			{
-				client_idle_time = pool_config->client_idle_limit - idle_duration;
-			}
-
-			for (backend_id = 0; backend_id < NUM_BACKENDS; backend_id++)
-			{
-				poolBE = pool * MAX_NUM_BACKENDS + backend_id;
-				snprintf(pools[lines].pool_pid, sizeof(pools[lines].pool_pid), "%d", proc_id);
-
-				if (pi->start_time)
-				{
-					if ((pool_config->child_life_time > 0)
-						&& (pi->connected)
-						&& (!exist_live_connection))
-					{
-						char proc_start_time[POOLCONFIG_MAXDATELEN + 1];
-						int wait_for_connect_time = pool_config->child_life_time - pi->wait_for_connect;
-
-						strftime(proc_start_time, sizeof(proc_start_time),
-								 "%Y-%m-%d %H:%M:%S", localtime(&pi->start_time));
-						snprintf(pools[lines].process_start_time, sizeof(pools[lines].process_start_time),
-								 "%s (%d:%02d before process restarting)", proc_start_time,
-								 wait_for_connect_time / 60,
-								 wait_for_connect_time % 60);
-					}
-					else
-					{
-						strftime(pools[lines].process_start_time, sizeof(pools[lines].process_start_time),
-								 "%Y-%m-%d %H:%M:%S", localtime(&pi->start_time));
-					}
-				}
-				else
-					*(pools[lines].process_start_time) = '\0';
-
-				snprintf(pools[lines].pool_id, sizeof(pools[lines].pool_id), "%d", pool);
-
-				snprintf(pools[lines].backend_id, sizeof(pools[lines].backend_id), "%d", backend_id);
-
-				snprintf(pools[lines].client_connection_count, sizeof(pools[lines].client_connection_count),
-						 "%d", pi->client_connection_count);
-
-				if (pi->connection_info[poolBE].client_connection_time == 0)
-				{
-					*(pools[lines].client_connection_time) = '\0';
-				}
-				else
-				{
-					strftime(pools[lines].client_connection_time, sizeof(pools[lines].client_connection_time),
-						 "%Y-%m-%d %H:%M:%S", localtime(&pi->connection_info[poolBE].client_connection_time));
-				}
-
-				if (pi->connection_info[poolBE].client_disconnection_time == 0)
-				{
-					*(pools[lines].client_disconnection_time) = '\0';
-				}
-				else
-				{
-					strftime(pools[lines].client_disconnection_time, sizeof(pools[lines].client_disconnection_time),
-						 "%Y-%m-%d %H:%M:%S", localtime(&pi->connection_info[poolBE].client_disconnection_time));
-				}
-
-				if ((pool_config->client_idle_limit > 0)
-					&& (pi->connection_info[poolBE].connected))
-				{
-					snprintf(pools[lines].client_idle_duration, sizeof(pools[lines].client_idle_duration),
-							 "%d (%d:%02d before client disconnected)", idle_duration,
-							 client_idle_time / 60,
-							 client_idle_time % 60);
-				}
-				else
-					snprintf(pools[lines].client_idle_duration, sizeof(pools[lines].client_idle_duration),
-							 "%d", idle_duration);
-
-				if (strlen(pi->connection_info[poolBE].database) == 0)
-				{
-					StrNCpy(pools[lines].database, "", POOLCONFIG_MAXIDENTLEN);
-					StrNCpy(pools[lines].username, "", POOLCONFIG_MAXIDENTLEN);
-					*(pools[lines].backend_connection_time) = '\0';
-					snprintf(pools[lines].pool_majorversion, sizeof(pools[lines].pool_majorversion), "%d", 0);
-					snprintf(pools[lines].pool_minorversion, sizeof(pools[lines].pool_minorversion), "%d", 0);
-				}
-				else
-				{
-					StrNCpy(pools[lines].database, pi->connection_info[poolBE].database, POOLCONFIG_MAXIDENTLEN);
-					StrNCpy(pools[lines].username, pi->connection_info[poolBE].user, POOLCONFIG_MAXIDENTLEN);
-					strftime(pools[lines].backend_connection_time, sizeof(pools[lines].backend_connection_time),
-							 "%Y-%m-%d %H:%M:%S", localtime(&pi->connection_info[poolBE].create_time));
-					snprintf(pools[lines].pool_majorversion, sizeof(pools[lines].pool_majorversion), "%d",
-							 pi->connection_info[poolBE].major);
-					snprintf(pools[lines].pool_minorversion, sizeof(pools[lines].pool_minorversion), "%d",
-							 pi->connection_info[poolBE].minor);
-				}
-				snprintf(pools[lines].pool_counter, sizeof(pools[lines].pool_counter), "%d",
-						 pi->connection_info[poolBE].counter);
-				snprintf(pools[lines].pool_backendpid, sizeof(pools[lines].pool_backendpid), "%d",
-						 ntohl(pi->connection_info[poolBE].pid));
-				snprintf(pools[lines].pool_connected, sizeof(pools[lines].pool_connected), "%d",
-						 pi->connection_info[poolBE].connected);
-
-				switch(pi->status)
-				{
-					case WAIT_FOR_CONNECT:
-						StrNCpy(pools[lines].status, "Wait for connection", POOLCONFIG_MAXPROCESSSTATUSLEN);
-						break;
-					case COMMAND_EXECUTE:
-						StrNCpy(pools[lines].status, "Execute command", POOLCONFIG_MAXPROCESSSTATUSLEN);
-						break;
-					case IDLE:
-						StrNCpy(pools[lines].status, "Idle", POOLCONFIG_MAXPROCESSSTATUSLEN);
-						break;
-					case IDLE_IN_TRANS:
-						StrNCpy(pools[lines].status, "Idle in transaction", POOLCONFIG_MAXPROCESSSTATUSLEN);
-						break;
-					case CONNECTING:
-						StrNCpy(pools[lines].status, "Connecting", POOLCONFIG_MAXPROCESSSTATUSLEN);
-						break;
-					default:
-						*(pools[lines].status) = '\0';
-				}
-
-				if (pi->connection_info[poolBE].connected && backend_id == load_balancing_node_id)
-					StrNCpy(pools[lines].load_balance_node, "1", POOLCONFIG_MAXPROCESSSTATUSLEN);
-				else
-					StrNCpy(pools[lines].load_balance_node, "0", POOLCONFIG_MAXPROCESSSTATUSLEN);
-				lines++;
-			}
-		}
+		lines += add_pool_entry_info_to_report(pools, lines, GetConnectionPoolEntryAtIndex(pool_id));
 	}
-
 	*nrows = lines;
 	return pools;
 }
-
 /*
  * SHOW　pool_pools;
  */
 void
-pools_reporting(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend)
+pools_reporting(POOL_CONNECTION * frontend, BackendClusterConnection * backend)
 {
 	short num_fields;
 	static char *field_names[] = {"pool_pid", "start_time", "client_connection_count", "pool_id",
@@ -1722,30 +1743,29 @@ pools_reporting(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend)
 POOL_REPORT_PROCESSES *
 get_processes(int *nrows)
 {
-	int			child;
-	int			pool;
-	int			poolBE;
+	int			child = 0;
+	int			child_id;
 	ProcessInfo *pi = NULL;
 	int			proc_id;
 
 	POOL_REPORT_PROCESSES *processes = palloc0(pool_config->num_init_children * sizeof(POOL_REPORT_PROCESSES));
 
-	for (child = 0; child < pool_config->num_init_children; child++)
+	for (child_id = 0; child_id < pool_config->num_init_children; child_id++)
 	{
 		int exist_live_connection = 0;
+		ConnectionPoolEntry *pool_entry = NULL;
 
-		pi = &process_info[child];
-		proc_id = pi->pid;
+		pi = &process_info[child_id];
+		if (pi->pid <= 0)
+			continue;
 
-		for (pool = 0; pool < pool_config->max_pool; pool++)
+		if (pi->pool_id >= 0)
 		{
-			poolBE = pool * MAX_NUM_BACKENDS;
-			if (pi->connection_info[poolBE].connected)
-			{
+			pool_entry = GetConnectionPoolEntry(pi->pool_id, child_id);
+			if (pool_entry && pool_entry->endPoint.client_connected)
 				exist_live_connection = 1;
-				break;
-			}
 		}
+		proc_id = pi->pid;
 
 		snprintf(processes[child].pool_pid, POOLCONFIG_MAXCOUNTLEN, "%d", proc_id);
 		if ((pool_config->child_life_time > 0)
@@ -1774,18 +1794,15 @@ get_processes(int *nrows)
 		StrNCpy(processes[child].backend_connection_time, "", POOLCONFIG_MAXDATELEN);
 		StrNCpy(processes[child].pool_counter, "", POOLCONFIG_MAXCOUNTLEN);
 
-		for (pool = 0; pool < pool_config->max_pool; pool++)
+		if (pool_entry &&
+			pool_entry->endPoint.client_connected &&
+			strlen(pool_entry->endPoint.database) > 0 &&
+			strlen(pool_entry->endPoint.user) > 0)
 		{
-			poolBE = pool * MAX_NUM_BACKENDS;
-			if (pi->connection_info[poolBE].connected &&
-				strlen(pi->connection_info[poolBE].database) > 0 &&
-				strlen(pi->connection_info[poolBE].user) > 0)
-			{
-				StrNCpy(processes[child].database, pi->connection_info[poolBE].database, POOLCONFIG_MAXIDENTLEN);
-				StrNCpy(processes[child].username, pi->connection_info[poolBE].user, POOLCONFIG_MAXIDENTLEN);
-				strftime(processes[child].backend_connection_time, POOLCONFIG_MAXDATELEN, "%Y-%m-%d %H:%M:%S", localtime(&pi->connection_info[poolBE].create_time));
-				snprintf(processes[child].pool_counter, POOLCONFIG_MAXCOUNTLEN, "%d", pi->connection_info[poolBE].counter);
-			}
+			StrNCpy(processes[child].database, pool_entry->endPoint.database, POOLCONFIG_MAXIDENTLEN);
+			StrNCpy(processes[child].username, pool_entry->endPoint.user, POOLCONFIG_MAXIDENTLEN);
+			strftime(processes[child].backend_connection_time, POOLCONFIG_MAXDATELEN, "%Y-%m-%d %H:%M:%S", localtime(&pool_entry->endPoint.create_time));
+			snprintf(processes[child].pool_counter, POOLCONFIG_MAXCOUNTLEN, "%d", pool_entry->endPoint.client_connection_count);
 		}
 		switch(pi->status)
 		{
@@ -1807,6 +1824,7 @@ get_processes(int *nrows)
 			default:
 				*(processes[child].status) = '\0';
 		}
+		child++;
 	}
 
 	*nrows = child;
@@ -1818,7 +1836,7 @@ get_processes(int *nrows)
  * SHOW pool_processes
  */
 void
-processes_reporting(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend)
+processes_reporting(POOL_CONNECTION * frontend, BackendClusterConnection * backend)
 {
 	static char *field_names[] = {"pool_pid", "start_time", "client_connection_count",
 								  "database", "username", "backend_connection_time", "pool_counter", "status"};
@@ -1861,7 +1879,7 @@ get_version(void)
  * SHOW pool_version;
  */
 void
-version_reporting(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend)
+version_reporting(POOL_CONNECTION * frontend, BackendClusterConnection * backend)
 {
 	static char *field_names[] = {"pool_version"};
 	static int offsettbl[] = {
@@ -1885,7 +1903,7 @@ version_reporting(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend)
  * Show in memory cache reporting
  */
 void
-cache_reporting(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend)
+cache_reporting(POOL_CONNECTION * frontend, BackendClusterConnection * backend)
 {
 	static char *field_names[] = {"num_cache_hits", "num_selects", "cache_hit_ratio", "num_hash_entries", "used_hash_entries", "num_cache_entries", "used_cache_entries_size", "free_cache_entries_size", "fragment_cache_entries_size"};
 	short		num_fields = sizeof(field_names) / sizeof(char *);
@@ -2100,7 +2118,7 @@ get_health_check_stats(int *nrows)
  * SHOW health_check_stats;
  */
 void
-show_health_check_stats(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend)
+show_health_check_stats(POOL_CONNECTION * frontend, BackendClusterConnection * backend)
 {
 	static char *field_names[] = {"node_id", "hostname", "port", "status", "role", "last_status_change",
 								  "total_count", "success_count", "fail_count", "skip_count", "retry_count",
@@ -2202,7 +2220,7 @@ get_backend_stats(int *nrows)
  * SHOW backend_stats;
  */
 void
-show_backend_stats(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend)
+show_backend_stats(POOL_CONNECTION * frontend, BackendClusterConnection * backend)
 {
 	static char *field_names[] = {"node_id", "hostname", "port", "status", "role",
 								  "select_cnt", "insert_cnt", "update_cnt", "delete_cnt", "ddl_cnt", "other_cnt",
@@ -2258,7 +2276,7 @@ show_backend_stats(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend)
  *
  * nrows: number of rows in data. 
  */
-static void send_row_description_and_data_rows(POOL_CONNECTION * frontend, POOL_CONNECTION_POOL * backend,
+static void send_row_description_and_data_rows(POOL_CONNECTION * frontend, BackendClusterConnection * backend,
 											   short num_fields, char **field_names, int *offsettbl,
 											   char *data, int row_size, int nrows)
 {
@@ -2422,7 +2440,7 @@ static
 char *db_node_role(int node)
 {
 	BackendInfo *bkinfo;
-	POOL_CONNECTION_POOL_SLOT *slots[MAX_NUM_BACKENDS];
+	BackendNodeConnection *slots[MAX_NUM_BACKENDS];
 	POOL_SELECT_RESULT *res;
 	char	*user;
 	char	*password;

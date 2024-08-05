@@ -78,7 +78,7 @@ pool_get_major_version(void)
 
 
 PGVersion *
-Pgversion(POOL_CONNECTION_POOL * backend)
+Pgversion(BackendClusterConnection * backend)
 {
 #define VERSION_BUF_SIZE	10
 	static	PGVersion	pgversion;
@@ -97,7 +97,7 @@ pool_create_relcache(int cachesize, char *sql, func_ptr register_func, func_ptr 
 
 /* dummy result of relcache (attrname, adsrc, usetimestamp)*/
 void *
-pool_search_relcache(POOL_RELCACHE * relcache, POOL_CONNECTION_POOL * backend, char *table)
+pool_search_relcache(POOL_RELCACHE * relcache, BackendClusterConnection * backend, char *table)
 {
 	if (strcmp(table, "\"rel1\"") == 0)
 		return (void *) &(rc[0]);
@@ -134,8 +134,8 @@ main(int argc, char **argv)
 	List	   *tree;
 	ListCell   *l;
 	StartupPacket sp;
-	POOL_CONNECTION_POOL backend;
-	POOL_CONNECTION_POOL_SLOT slot;
+	BackendClusterConnection backend;
+	BackendNodeConnection slot;
 	POOL_SENT_MESSAGE msg;
 	POOL_QUERY_CONTEXT ctx;
 

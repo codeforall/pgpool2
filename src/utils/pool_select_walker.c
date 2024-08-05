@@ -574,7 +574,7 @@ is_system_catalog(char *table_name)
 
 	bool		result;
 	static POOL_RELCACHE * relcache;
-	POOL_CONNECTION_POOL *backend;
+	BackendClusterConnection *backend;
 
 	if (table_name == NULL)
 	{
@@ -668,7 +668,7 @@ is_temp_table(char *table_name)
 #define ISTEMPQUERY84 "SELECT count(*) FROM pg_catalog.pg_class AS c WHERE c.relname = '%s' AND c.relistemp"
 	bool		result;
 	char	   *query;
-	POOL_CONNECTION_POOL *backend;
+	BackendClusterConnection *backend;
 	int			major;
 
 	if (table_name == NULL || pool_config->check_temp_table == CHECK_TEMP_NONE ||
@@ -777,7 +777,7 @@ is_unlogged_table(char *table_name)
 #define ISUNLOGGEDQUERY3 "SELECT count(*) FROM pg_catalog.pg_class AS c WHERE c.oid = pg_catalog.to_regclass('%s') AND c.relpersistence = 'u'"
 
 	static POOL_RELCACHE * relcache;
-	POOL_CONNECTION_POOL *backend;
+	BackendClusterConnection *backend;
 	int		major;
 
 	if (table_name == NULL)
@@ -859,7 +859,7 @@ is_view(char *table_name)
 #define ISVIEWQUERY3 "SELECT count(*) FROM pg_catalog.pg_class AS c WHERE c.oid = pg_catalog.to_regclass('%s') AND (c.relkind = 'v' OR c.relkind = 'm')"
 
 	static POOL_RELCACHE * relcache;
-	POOL_CONNECTION_POOL *backend;
+	BackendClusterConnection *backend;
 	bool		result;
 	char	   *query;
 
@@ -922,11 +922,11 @@ pool_has_pgpool_regclass(void)
 
 	bool		result;
 	static POOL_RELCACHE * relcache;
-	POOL_CONNECTION_POOL *backend;
+	BackendClusterConnection *backend;
 	char	   *user;
 
 	backend = pool_get_session_context(false)->backend;
-	user = MAIN_CONNECTION(backend)->sp->user;
+	user = backend->sp->user;
 
 	if (!relcache)
 	{
@@ -951,7 +951,7 @@ pool_has_pgpool_regclass(void)
 bool
 pool_has_to_regclass(void)
 {
-	POOL_CONNECTION_POOL *backend;
+	BackendClusterConnection *backend;
 	PGVersion	*pgversion;
 
 	backend = pool_get_session_context(false)->backend;
@@ -1106,7 +1106,7 @@ bool function_volatile_property(char *fname, FUNC_VOLATILE_PROPERTY property)
 	char		query[1024];
 	char	   *rawstring = NULL;
 	List	   *names = NIL;
-	POOL_CONNECTION_POOL   *backend;
+	BackendClusterConnection   *backend;
 	static POOL_RELCACHE   *relcache;
 	char	prop_volatile;
 
@@ -1211,7 +1211,7 @@ pool_table_name_to_oid(char *table_name)
 
 	int			oid = 0;
 	static POOL_RELCACHE * relcache;
-	POOL_CONNECTION_POOL *backend;
+	BackendClusterConnection *backend;
 	char	   *query;
 
 	if (table_name == NULL)
@@ -1517,7 +1517,7 @@ bool function_has_return_type(char *fname, char *typename)
 	char		query[1024];
 	char	   *rawstring = NULL;
 	List	   *names = NIL;
-	POOL_CONNECTION_POOL   *backend;
+	BackendClusterConnection   *backend;
 	static POOL_RELCACHE   *relcache;
 
 	/* We need a modifiable copy of the input string. */

@@ -63,11 +63,11 @@
 memcached_st *memc;
 #endif
 
-static char *encode_key(const char *s, char *buf, POOL_CONNECTION_POOL * backend);
+static char *encode_key(const char *s, char *buf, BackendClusterConnection * backend);
 #ifdef DEBUG
 static void dump_cache_data(const char *data, size_t len);
 #endif
-static int	pool_commit_cache(POOL_CONNECTION_POOL * backend, char *query, char *data, size_t datalen, int num_oids, int *oids);
+static int	pool_commit_cache(BackendClusterConnection * backend, char *query, char *data, size_t datalen, int num_oids, int *oids);
 static int	send_cached_messages(POOL_CONNECTION * frontend, const char *qcache, int qcachelen);
 static void send_message(POOL_CONNECTION * conn, char kind, int len, const char *data);
 #ifdef USE_MEMCACHED
@@ -235,7 +235,7 @@ memqcache_register(char kind,
  * Commit SELECT results to cache storage.
  */
 static int
-pool_commit_cache(POOL_CONNECTION_POOL * backend, char *query, char *data, size_t datalen, int num_oids, int *oids)
+pool_commit_cache(BackendClusterConnection * backend, char *query, char *data, size_t datalen, int num_oids, int *oids)
 {
 #ifdef USE_MEMCACHED
 	memcached_return rc;
@@ -345,7 +345,7 @@ pool_commit_cache(POOL_CONNECTION_POOL * backend, char *query, char *data, size_
  * Commit SELECT system catalog results to cache storage.
  */
 int
-pool_catalog_commit_cache(POOL_CONNECTION_POOL * backend, char *query, char *data, size_t datalen)
+pool_catalog_commit_cache(BackendClusterConnection * backend, char *query, char *data, size_t datalen)
 {
 #ifdef USE_MEMCACHED
 	memcached_return rc;
@@ -453,7 +453,7 @@ pool_catalog_commit_cache(POOL_CONNECTION_POOL * backend, char *query, char *dat
  * 1: not found
  */
 int
-pool_fetch_cache(POOL_CONNECTION_POOL * backend, const char *query, char **buf, size_t *len)
+pool_fetch_cache(BackendClusterConnection * backend, const char *query, char **buf, size_t *len)
 {
 	char	   *ptr;
 	char		tmpkey[MAX_KEY];
@@ -555,7 +555,7 @@ pool_fetch_cache(POOL_CONNECTION_POOL * backend, const char *query, char **buf, 
  * create cache key as md5(username + query string + database name)
  */
 static char *
-encode_key(const char *s, char *buf, POOL_CONNECTION_POOL * backend)
+encode_key(const char *s, char *buf, BackendClusterConnection * backend)
 {
 	char	   *strkey;
 	int			u_length;
@@ -563,12 +563,12 @@ encode_key(const char *s, char *buf, POOL_CONNECTION_POOL * backend)
 	int			q_length;
 	int			length;
 
-	u_length = strlen(backend->info->user);
+	u_length = strlen(backend->backend_end_point->user);
 	ereport(DEBUG1,
 			(errmsg("memcache encode key"),
-			 errdetail("username: \"%s\" database_name: \"%s\"", backend->info->user, backend->info->database)));
+			 errdetail("username: \"%s\" database_name: \"%s\"", backend->backend_end_point->user, backend->backend_end_point->database)));
 
-	d_length = strlen(backend->info->database);
+	d_length = strlen(backend->backend_end_point->database);
 
 	q_length = strlen(s);
 	ereport(DEBUG1,
@@ -579,7 +579,7 @@ encode_key(const char *s, char *buf, POOL_CONNECTION_POOL * backend)
 
 	strkey = (char *) palloc(sizeof(char) * length);
 
-	snprintf(strkey, length, "%s%s%s", backend->info->user, s, backend->info->database);
+	snprintf(strkey, length, "%s%s%s", backend->backend_end_point->user, s, backend->backend_end_point->database);
 
 	pool_md5_hash(strkey, strlen(strkey), buf);
 	ereport(DEBUG1,
@@ -729,7 +729,7 @@ delete_cache_on_memcached(const char *key)
  */
 POOL_STATUS
 pool_fetch_from_memory_cache(POOL_CONNECTION * frontend,
-							 POOL_CONNECTION_POOL * backend,
+							 BackendClusterConnection * backend,
 							 char *contents, bool *foundp)
 {
 	char	   *qcache;
@@ -1505,7 +1505,7 @@ pool_get_database_oid(void)
  */
 	int			oid = 0;
 	static POOL_RELCACHE * relcache;
-	POOL_CONNECTION_POOL *backend;
+	BackendClusterConnection *backend;
 
 	backend = pool_get_session_context(false)->backend;
 
@@ -1529,7 +1529,7 @@ pool_get_database_oid(void)
 	 * Search relcache.
 	 */
 	oid = (int) (intptr_t) pool_search_relcache(relcache, backend,
-												MAIN_CONNECTION(backend)->sp->database);
+												backend->sp->database);
 	return oid;
 }
 
@@ -1544,7 +1544,7 @@ pool_get_database_oid_from_dbname(char *dbname)
 	POOL_SELECT_RESULT *res;
 	char		*query;
 
-	POOL_CONNECTION_POOL *backend;
+	BackendClusterConnection *backend;
 
 	backend = pool_get_session_context(false)->backend;
 
@@ -3586,7 +3586,7 @@ pool_check_and_discard_cache_buffer(int num_oids, int *oids)
  * For other case At Ready for Query handle query cache.
  */
 void
-pool_handle_query_cache(POOL_CONNECTION_POOL * backend, char *query, Node *node, char state)
+pool_handle_query_cache(BackendClusterConnection * backend, char *query, Node *node, char state)
 {
 	POOL_SESSION_CONTEXT *session_context;
 	pool_sigset_t oldmask;
