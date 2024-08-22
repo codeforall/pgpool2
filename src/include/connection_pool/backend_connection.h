@@ -88,7 +88,6 @@ typedef struct
     int wbufpo; /* buffer offset */
 
 #ifdef USE_SSL
-    SSL_CTX *ssl_ctx; /* SSL connection context */
     SSL *ssl;         /* SSL connection */
     X509 *peer;
     char *cert_cn; /* common in the ssl certificate presented by

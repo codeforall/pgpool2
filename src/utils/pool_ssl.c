@@ -43,6 +43,7 @@
 #ifdef USE_SSL
 
 static SSL_CTX *SSL_frontend_context = NULL;
+static SSL_CTX *SSL_backend_context = NULL;
 static bool SSL_initialized = false;
 static bool dummy_ssl_passwd_cb_called = false;
 static int  dummy_ssl_passwd_cb(char *buf, int size, int rwflag, void *userdata);
@@ -84,9 +85,6 @@ enum ssl_conn_type
 	ssl_conn_clientserver, ssl_conn_serverclient
 };
 
-/* perform per-connection ssl initialization.  returns nonzero on error */
-static int	init_ssl_ctx(POOL_CONNECTION * cp, enum ssl_conn_type conntype);
-
 /* OpenSSL error message */
 static void perror_ssl(const char *context);
 
@@ -101,8 +99,17 @@ pool_ssl_negotiate_clientserver(POOL_CONNECTION * cp)
 
 	cp->ssl_active = -1;
 
-	if ((!pool_config->ssl) || init_ssl_ctx(cp, ssl_conn_clientserver))
+	if ((!pool_config->ssl) || SSL_backend_context == NULL)
 		return;
+
+	cp->ssl = SSL_new(SSL_backend_context);
+	if (!cp->ssl)
+	{
+		ereport(WARNING,
+				(errmsg("could not create SSL context: %s",
+						SSLerrmessage(ERR_get_error()))));
+		return;
+	}
 
 	ereport(DEBUG1,
 			(errmsg("attempting to negotiate a secure connection"),
@@ -207,9 +214,6 @@ pool_ssl_close(POOL_CONNECTION * cp)
 		SSL_shutdown(cp->ssl);
 		SSL_free(cp->ssl);
 	}
-
-	if (cp->ssl_ctx)
-		SSL_CTX_free(cp->ssl_ctx);
 }
 
 int
@@ -341,77 +345,6 @@ retry:
 	return n;
 }
 
-static int
-init_ssl_ctx(POOL_CONNECTION * cp, enum ssl_conn_type conntype)
-{
-	int			error = 0;
-	char	   *cacert = NULL,
-			   *cacert_dir = NULL;
-
-	char ssl_cert_path[POOLMAXPATHLEN + 1] = "";
-	char ssl_key_path[POOLMAXPATHLEN + 1] = "";
-	char ssl_ca_cert_path[POOLMAXPATHLEN + 1] = "";
-
-	char *conf_file_copy = pstrdup(get_config_file_name());
-	char *conf_dir = dirname(conf_file_copy);
-
-	pool_ssl_make_absolute_path(pool_config->ssl_cert, conf_dir, ssl_cert_path);
-	pool_ssl_make_absolute_path(pool_config->ssl_key, conf_dir, ssl_key_path);
-	pool_ssl_make_absolute_path(pool_config->ssl_ca_cert, conf_dir, ssl_ca_cert_path);
-
-	pfree(conf_file_copy);
-
-	/* initialize SSL members */
-#if (OPENSSL_VERSION_NUMBER >= 0x10100000L && !defined (LIBRESSL_VERSION_NUMBER))
-	cp->ssl_ctx = SSL_CTX_new(TLS_method());
-#else
-	cp->ssl_ctx = SSL_CTX_new(SSLv23_method());
-#endif
-
-	SSL_RETURN_ERROR_IF((!cp->ssl_ctx), "SSL_CTX_new");
-
-	/*
-	 * Disable OpenSSL's moving-write-buffer sanity check, because it causes
-	 * unnecessary failures in nonblocking send cases.
-	 */
-	SSL_CTX_set_mode(cp->ssl_ctx, SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
-
-	if (conntype == ssl_conn_serverclient)
-	{
-		/* between frontend and pgpool */
-		error = SSL_CTX_use_certificate_chain_file(cp->ssl_ctx,
-												   ssl_cert_path);
-		SSL_RETURN_ERROR_IF((error != 1), "Loading SSL certificate");
-
-		error = SSL_CTX_use_PrivateKey_file(cp->ssl_ctx,
-											ssl_key_path,
-											SSL_FILETYPE_PEM);
-		SSL_RETURN_ERROR_IF((error != 1), "Loading SSL private key");
-	}
-	else
-	{
-		/* between pgpool and backend */
-		/* set extra verification if ssl_ca_cert or ssl_ca_cert_dir are set */
-		if (strlen(ssl_ca_cert_path))
-			cacert = ssl_ca_cert_path;
-		if (strlen(pool_config->ssl_ca_cert_dir))
-			cacert_dir = pool_config->ssl_ca_cert_dir;
-
-		if (cacert || cacert_dir)
-		{
-			error = SSL_CTX_load_verify_locations(cp->ssl_ctx,
-												  cacert,
-												  cacert_dir);
-			SSL_RETURN_ERROR_IF((error != 1), "SSL verification setup");
-			SSL_CTX_set_verify(cp->ssl_ctx, SSL_VERIFY_PEER, NULL);
-		}
-	}
-
-	cp->ssl = SSL_new(cp->ssl_ctx);
-	SSL_RETURN_ERROR_IF((!cp->ssl), "SSL_new");
-
-	return 0;
-}
 
 static void
 perror_ssl(const char *context)
@@ -570,6 +503,83 @@ verify_cb(int ok, X509_STORE_CTX *ctx)
 	return ok;
 }
 
+/*
+ *	Initialize global SSL context, used for pgpool to Postgresql backend
+ *	communication.
+
+ */
+int
+SSL_ClientSide_init(void)
+{
+	SSL_CTX *context;
+	int error = 0;
+	char *cacert = NULL,
+		 *cacert_dir = NULL;
+
+	char ssl_cert_path[POOLMAXPATHLEN + 1] = "";
+	char ssl_key_path[POOLMAXPATHLEN + 1] = "";
+	char ssl_ca_cert_path[POOLMAXPATHLEN + 1] = "";
+
+	char *conf_file_copy = pstrdup(get_config_file_name());
+	char *conf_dir = dirname(conf_file_copy);
+
+	pool_ssl_make_absolute_path(pool_config->ssl_cert, conf_dir, ssl_cert_path);
+	pool_ssl_make_absolute_path(pool_config->ssl_key, conf_dir, ssl_key_path);
+	pool_ssl_make_absolute_path(pool_config->ssl_ca_cert, conf_dir, ssl_ca_cert_path);
+
+	pfree(conf_file_copy);
+	SSL_backend_context = NULL;
+
+	/* initialize SSL members */
+#if (OPENSSL_VERSION_NUMBER >= 0x10100000L && !defined(LIBRESSL_VERSION_NUMBER))
+		context = SSL_CTX_new(TLS_method());
+#else
+		context = SSL_CTX_new(SSLv23_method());
+#endif
+
+	if (!context)
+	{
+		ereport(WARNING,
+				(errmsg("could not create SSL context: %s",
+						SSLerrmessage(ERR_get_error()))));
+		goto error;
+	}
+
+	/*
+	 * Disable OpenSSL's moving-write-buffer sanity check, because it causes
+	 * unnecessary failures in nonblocking send cases.
+	 */
+	SSL_CTX_set_mode(context, SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
+
+	/* between pgpool and backend */
+	/* set extra verification if ssl_ca_cert or ssl_ca_cert_dir are set */
+	if (strlen(ssl_ca_cert_path))
+		cacert = ssl_ca_cert_path;
+	if (strlen(pool_config->ssl_ca_cert_dir))
+		cacert_dir = pool_config->ssl_ca_cert_dir;
+
+	if (cacert || cacert_dir)
+	{
+		error = SSL_CTX_load_verify_locations(context,
+											  cacert,
+											  cacert_dir);
+		if (error != 1)
+		{
+			ereport(WARNING,
+					(errmsg("could not load root certificate file \"%s\": %s",
+							cacert, SSLerrmessage(ERR_get_error()))));
+			goto error;
+		}
+
+		SSL_CTX_set_verify(context, SSL_VERIFY_PEER, NULL);
+	}
+	SSL_backend_context = context;
+	return 0;
+error:
+	if (context)
+		SSL_CTX_free(context);
+	return -1;
+}
 /*
  *	Initialize global SSL context.
  *
@@ -1149,9 +1159,13 @@ SSL_ServerSide_init(void)
 {
 	return 0;
 }
+int
+SSL_ClientSide_init(void)
+{
+	return 0;
+}
 
-bool
-pool_ssl_pending(POOL_CONNECTION * cp)
+bool pool_ssl_pending(POOL_CONNECTION *cp)
 {
 	return false;
 }

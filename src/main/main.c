@@ -314,7 +314,10 @@ main(int argc, char **argv)
 	 * If ssl is enabled, initialize the SSL context
 	 */
 	if (pool_config->ssl)
+	{
 		SSL_ServerSide_init();
+		SSL_ClientSide_init();
+	}
 #endif							/* USE_SSL */
 
 	/* check effective user id for watchdog */

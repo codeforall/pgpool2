@@ -78,6 +78,6 @@ extern int	pool_ssl_read(POOL_CONNECTION * cp, void *buf, int size);
 extern int	pool_ssl_write(POOL_CONNECTION * cp, const void *buf, int size);
 extern bool pool_ssl_pending(POOL_CONNECTION * cp);
 extern int	SSL_ServerSide_init(void);
-
+extern int SSL_ClientSide_init(void);
 
 #endif /* pool_ssl_h */

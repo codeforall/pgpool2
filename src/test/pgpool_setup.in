@@ -902,7 +902,7 @@ function set_pgpool_conf {
 	if [ $ENABLE_TEST = "true" ];then
 	    echo "health_check_test = on" >> $CONF
 	fi
-	if [ $POOL_VERBOSE_OUTPUT = "true" ];then
+	if [ $POOL_VERBOSE_OUTPUT = "true" ]; then
 	    echo "log_error_verbosity = verbose" >> $CONF
 	fi
 
