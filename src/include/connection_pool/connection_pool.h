@@ -74,6 +74,7 @@ typedef struct ConnectionPoolRoutine
     const char *(*GetConnectionPoolInfo)(void);
     void (*UpdatePooledConnectionCount)(void);
     int (*GetPoolEntriesCount)(void);
+    int (*DoHouseKeeping)(void);
     ConnectionPoolEntry *(*GetConnectionPoolEntry)(int pool_idx, int child_id);
 } ConnectionPoolRoutine;
 
@@ -95,6 +96,8 @@ extern PooledBackendClusterConnection *GetBackendEndPointForCancelPacket(CancelP
 extern ConnectionPoolEntry *GetConnectionPoolEntryAtIndex(int pool_idx);
 extern ConnectionPoolEntry *GetConnectionPoolEntry(int pool_id, int child_id);
 extern void UpdatePooledConnectionCount(void);
+extern int DoConnectionPoolHouseKeeping(void);
+extern int IsHousekeepingAlarmActive(void);
 
 extern bool ConnectionPoolRegisterNewLease(ConnectionPoolEntry *pool_entry, LEASE_TYPES lease_type, int child_id, pid_t child_pid);
 extern bool ConnectionPoolUnregisterLease(ConnectionPoolEntry* pool_entry, int child_id, pid_t child_pid);
@@ -111,4 +114,7 @@ extern bool GlobalPoolLeasePooledConnectionToChild(IPC_Endpoint *ipc_endpoint);
 extern void GlobalPoolChildProcessDied(int child_id, pid_t child_pid);
 /* from classic_connection_pool.c */
 extern const ConnectionPoolRoutine *GetClassicConnectionPool(void);
+
+extern void TerminatePooledBackendClusterConnection(PooledBackendClusterConnection *endPoint);
+extern void TerminateBackendSocketConnection(int socket);
 #endif // CONNECTION_POOL_H

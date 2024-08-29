@@ -22,16 +22,29 @@
 #include "pool.h"
 #include "pool_config.h"
 #include "connection_pool/connection_pool.h"
+#include "utils/pool_stream.h"
 #include "utils/elog.h"
 #include <arpa/inet.h>
 #include <time.h>
 #include <string.h>
+#include <unistd.h>
+#include "context/pool_process_context.h"
+
+volatile sig_atomic_t housekeeping_timer_expired = 0; /* flag for connection pool house keeping alarm */
 
 static const ConnectionPoolRoutine *activeConnectionPool = NULL;
 ConnectionPoolEntry *ConnectionPool = NULL;
 
 static PooledBackendClusterConnection* get_backend_connection_for_cancel_packer(CancelPacket *cp);
 static PooledBackendNodeConnection *get_backend_node_connection_for_backend_pid(int backend_pid, int *backend_node_id);
+
+static RETSIGTYPE
+connection_pool_housekeeping_timer_handler(int sig)
+{
+    ereport(LOG,
+            (errmsg("connection pool housekeeping timer expired")));
+    housekeeping_timer_expired = 1;
+}
 
 void
 InstallConnectionPool(const ConnectionPoolRoutine *ConnectionPoolRoutine)
@@ -204,6 +217,34 @@ GetConnectionPoolEntry(int pool_id, int child_id)
     return activeConnectionPool->GetConnectionPoolEntry(pool_id, child_id);
 }
 
+int
+DoConnectionPoolHouseKeeping(void)
+{
+    int ret = 0;
+    Assert(activeConnectionPool);
+
+    ereport(DEBUG2,
+            (errmsg("DoConnectionPoolHouseKeeping Called")));
+
+    housekeeping_timer_expired = 0;
+
+    if (activeConnectionPool->DoHouseKeeping)
+        ret = activeConnectionPool->DoHouseKeeping();
+    if (ret > 0 )
+    {
+        ereport(DEBUG2,
+                (errmsg("DoConnectionPoolHouseKeeping: setting up alarm for %d seconds", ret)));
+        pool_alarm(connection_pool_housekeeping_timer_handler, ret);
+    }
+    return 0;
+}
+
+int
+IsHousekeepingAlarmActive(void)
+{
+    return housekeeping_timer_expired;
+}
+
 bool
 ConnectionPoolUnregisterLease(ConnectionPoolEntry* pool_entry, int child_id, pid_t child_pid)
 {
@@ -243,7 +284,7 @@ ConnectionPoolRegisterNewLease(ConnectionPoolEntry *pool_entry, LEASE_TYPES leas
     child_proc_info = &process_info[child_id];
     child_proc_info->pool_id = pool_entry->pool_id;
 
-    pool_entry->last_returned_time = 0;
+    pool_entry->last_returned_time = TMINTMAX;
 
     if (pool_entry->status == POOL_ENTRY_CONNECTED)
     {
@@ -376,4 +417,40 @@ InvalidateNodeInPooledConnections(int node_id)
         }
     }
     return count;
+}
+
+/*
+ * send "terminate"(X) message to all backend sockets, indicating that
+ * backend should prepare to close connection to frontend (actually
+ * pgpool)
+ * TODO handle SSL connections
+ */
+void
+TerminatePooledBackendClusterConnection(PooledBackendClusterConnection *endPoint)
+{
+    int i;
+    ereport(DEBUG2,
+            (errmsg("terminating pooled connection for user \"%s\" database \"%s\"",
+                        endPoint->user, endPoint->database)));
+    for (i = 0; i < NUM_BACKENDS; i++)
+    {
+        if (endPoint->conn_slots[i].socket > 0)
+        {
+            ereport(DEBUG2,
+                    (errmsg("closing socket:%d for backend:%d pid:%d", endPoint->conn_slots[i].socket, i, ntohl(endPoint->conn_slots[i].pid))));
+            TerminateBackendSocketConnection(endPoint->conn_slots[i].socket);
+            endPoint->conn_slots[i].socket = -1;
+        }
+    }
+}
+
+void
+TerminateBackendSocketConnection(int socket)
+{
+    const int len = htonl(4);
+    socket_set_nonblock(socket);
+    socket_write(socket, "X", 1);
+    socket_write(socket, &len, sizeof(len));
+    shutdown(socket, SHUT_RDWR);
+    close(socket);
 }

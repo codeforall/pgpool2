@@ -30,9 +30,6 @@ bool ClearChildPooledConnectionData(void);
 
 extern BackendClusterConnection *GetBackendClusterConnection(void);
 extern void pool_discard_cp(char *user, char *database, int protoMajor);
-extern void pool_backend_timer(void);
-extern void pool_connection_pool_timer(BackendClusterConnection * backend);
-extern RETSIGTYPE pool_backend_timer_handler(int sig);
 
 extern int	connect_inet_domain_socket(int slot, bool retry);
 extern int	connect_unix_domain_socket(int slot, bool retry);

@@ -435,6 +435,8 @@ function set_postgresql_conf
 	PGHBACONF=$1/pg_hba.conf
 
 	echo "listen_addresses = '*'" >> $PGCONF
+	echo "log_connections = on" >> $PGCONF
+	echo "log_disconnections = on" >> $PGCONF
 	echo "port = $PORT" >> $PGCONF
 	echo "logging_collector = on" >> $PGCONF
 	echo "log_filename = '%A.log'" >> $PGCONF

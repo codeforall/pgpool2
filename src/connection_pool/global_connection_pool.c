@@ -49,7 +49,8 @@ static bool import_pooled_connection_into_child(int pool_id, int *sockets, LEASE
 static bool export_local_cluster_connection_data_to_pool(void);
 static bool export_local_cluster_sockets_pool(void);
 static void import_pooled_startup_packet_into_child(PooledBackendClusterConnection *backend_end_point);
-static ConnectionPoolEntry* get_pool_entry_for_pool_id(int pool_id);
+static int terminate_global_idle_connections(void);
+static ConnectionPoolEntry *get_pool_entry_for_pool_id(int pool_id);
 static int get_sockets_array(PooledBackendClusterConnection *backend_endpoint, int **sockets, int *num_sockets, bool pooled_socks);
 
 static int get_pooled_connection_for_lending(char *user, char *database, int protoMajor, LEASE_TYPES *lease_type);
@@ -167,7 +168,6 @@ GPReleaseChildConnectionPool(void)
 static void
 GPUpdatePooledConnectionCount(void)
 {
-    int pool;
     int current_pool_id = -1;
     BackendClusterConnection *current_backend_con;
 
@@ -178,6 +178,16 @@ GPUpdatePooledConnectionCount(void)
         pool_get_my_process_info()->pooled_connections = 1;
     else
         pool_get_my_process_info()->pooled_connections = 0;
+}
+
+static int
+GPDoHouseKeeping(void)
+{
+    if (processType != PT_MAIN)
+        return 0;
+    if (pool_config->connection_life_time > 0)
+        return terminate_global_idle_connections();
+    return 0;
 }
 
 ConnectionPoolRoutine GlobalConnectionPoolRoutine = {
@@ -194,7 +204,8 @@ ConnectionPoolRoutine GlobalConnectionPoolRoutine = {
     .GetConnectionPoolInfo = GPGetConnectionPoolInfo,
     .GetPoolEntriesCount = GPGetPoolEntriesCount,
     .GetConnectionPoolEntry = GlobalConnectionPoolGetPoolEntry,
-    .UpdatePooledConnectionCount = GPUpdatePooledConnectionCount
+    .UpdatePooledConnectionCount = GPUpdatePooledConnectionCount,
+    .DoHouseKeeping = GPDoHouseKeeping
 };
 
 const ConnectionPoolRoutine*
@@ -431,6 +442,8 @@ export_local_cluster_connection_data_to_pool(void)
             backend_end_point->conn_slots[i].pid = current_backend_con->slots[i].pid;
             backend_end_point->backend_status[i] = CON_UP;
             backend_end_point->backend_ids[sock_index++] = i;
+            ereport(LOG,
+                    (errmsg("exporting socket:%d for pool_id:%d->%d pid:%d", current_backend_con->slots[i].con->fd, pool_id, i, ntohl(current_backend_con->slots[i].pid))));
         }
         else
         {
@@ -457,8 +470,55 @@ import_pooled_startup_packet_into_child(PooledBackendClusterConnection *backend_
     ImportStartupPacketIntoChild(&backend_end_point->sp, backend_end_point->startup_packet_data);
 }
 
+static int
+terminate_global_idle_connections(void)
+{
+    int pool;
+    time_t now;
 
+    Assert(connection_pool);
+    Assert(processType == PT_MAIN);
 
+    now = time(NULL);
+    if (now == ((time_t)-1))
+    {
+        ereport(WARNING, (errmsg("Failed to get current time")));
+        return -2;
+    }
+
+    for (pool = 0; pool < GPGetPoolEntriesCount(); pool++)
+    {
+        ConnectionPoolEntry *pool_entry = &ConnectionPool[pool];
+        PooledBackendClusterConnection *endPoint = &pool_entry->endPoint;
+
+        if (pool_entry->status == POOL_ENTRY_EMPTY)
+            continue;
+
+        ereport(LOG,
+                (errmsg("POOL:%d, STATUS:%d [%s:%s]", pool, pool_entry->status,
+                        endPoint->database,
+                        endPoint->user)));
+
+        if (pool_entry->status == POOL_ENTRY_CONNECTED &&
+            pool_entry->child_pid <= 0)
+        {
+            int sec = now - pool_entry->last_returned_time;
+            if (sec >= pool_config->connection_life_time)
+            {
+                /* discard expired connection */
+                ereport(DEBUG2,
+                        (errmsg("global connection pool house keeping discarding pooled connection:%d idle for %d ses", pool,sec),
+                         errdetail("expired user \"%s\" database \"%s\"",
+                                   endPoint->user, endPoint->database)));
+                TerminatePooledBackendClusterConnection(endPoint);
+                memset(&pool_entry->endPoint, 0, sizeof(PooledBackendClusterConnection));
+                pool_entry->status = POOL_ENTRY_EMPTY;
+                pool_entry->last_returned_time = TMINTMAX;
+            }
+        }
+    }
+    return 0;
+}
 
 /*
  ***********************************************
@@ -546,7 +606,7 @@ GlobalPoolChildProcessDied(int child_id, pid_t child_pid)
         {
             ConnectionPool[i].child_pid = -1;
             ConnectionPool[i].child_id = -1;
-            ConnectionPool[i].need_cleanup = true;
+            ConnectionPool[i].need_cleanup = false;
             ConnectionPool[i].status = POOL_ENTRY_EMPTY;
             ConnectionPool[i].last_returned_time = time(NULL);
             ConnectionPool[i].status = POOL_ENTRY_EMPTY;
@@ -759,7 +819,6 @@ unregister_lease(int pool_id, IPC_Endpoint *ipc_endpoint)
 static bool
 register_new_lease(int pool_id, LEASE_TYPES lease_type, IPC_Endpoint *ipc_endpoint)
 {
-    ProcessInfo *child_proc_info;
     ConnectionPoolEntry * pool_entry;
 
     if (processType != PT_MAIN)
@@ -790,3 +849,4 @@ register_new_lease(int pool_id, LEASE_TYPES lease_type, IPC_Endpoint *ipc_endpoi
             (errmsg("pool_id:%d, leased to child:%d", pool_id, pool_entry->child_pid)));
     return true;
 }
+

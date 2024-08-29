@@ -50,8 +50,9 @@ static bool export_classic_cluster_connection_data_to_pool(void);
 static bool copy_classic_cluster_sockets_pool(void);
 static void import_pooled_startup_packet_into_child(PooledBackendClusterConnection *backend_end_point);
 static ConnectionPoolEntry *get_pool_entry_for_pool_id(int pool_id);
+static int terminate_idle_classic_connections(void);
 
-static LEASE_TYPES pool_get_cp(char *user, char *database, int protoMajor, bool check_socket, ConnectionPoolEntry **selected_pool);
+static LEASE_TYPES pool_get_cp(char *database, char *user, int protoMajor, bool check_socket, ConnectionPoolEntry **selected_pool);
 static ConnectionPoolEntry *get_pool_entry_to_discard(void);
 static void discard_cp(void);
 static void clear_pooled_cluster_connection(PooledBackendClusterConnection *backend_end_point);
@@ -237,13 +238,22 @@ LPUpdatePooledConnectionCount(void)
 
     for (pool = 0; pool < pool_config->max_pool; pool++)
     {
-        int i;
         ConnectionPoolEntry *pool_entry = &connection_pool[pool];
         PooledBackendClusterConnection *endPoint = &pool_entry->endPoint;
         if (pool_entry->status != POOL_ENTRY_EMPTY)
             count++;
     }
     pool_get_my_process_info()->pooled_connections = count;
+}
+
+static int
+LPDoHouseKeeping(void)
+{
+    if (processType != PT_CHILD)
+        return 0;
+    if (pool_config->connection_life_time > 0)
+        return terminate_idle_classic_connections();
+    return 0;
 }
 
 ConnectionPoolRoutine ClassicConnectionPoolRoutine = {
@@ -260,7 +270,8 @@ ConnectionPoolRoutine ClassicConnectionPoolRoutine = {
     .GetConnectionPoolInfo = LPGetConnectionPoolInfo,
     .GetPoolEntriesCount = LPGetPoolEntriesCount,
     .GetConnectionPoolEntry = ClassicConnectionPoolGetPoolEntry,
-    .UpdatePooledConnectionCount = LPUpdatePooledConnectionCount
+    .UpdatePooledConnectionCount = LPUpdatePooledConnectionCount,
+    .DoHouseKeeping = LPDoHouseKeeping
     };
 
 const ConnectionPoolRoutine *
@@ -425,7 +436,7 @@ import_pooled_startup_packet_into_child(PooledBackendClusterConnection *backend_
  * find connection by user and database
  */
 static LEASE_TYPES
-pool_get_cp(char *user, char *database, int protoMajor, bool check_socket, ConnectionPoolEntry **selected_pool)
+pool_get_cp(char *database, char *user, int protoMajor, bool check_socket, ConnectionPoolEntry **selected_pool)
 {
     pool_sigset_t oldmask;
     int i;
@@ -447,8 +458,8 @@ pool_get_cp(char *user, char *database, int protoMajor, bool check_socket, Conne
                 first_empty_entry = &connection_pool[i];
             continue;
         }
-        if (strcmp(endPoint->user, user) == 0 &&
-            strcmp(endPoint->database, database) == 0 &&
+        if (!strcmp(endPoint->user, user) &&
+            !strcmp(endPoint->database, database) &&
             endPoint->sp.major == protoMajor)
             {
                 int sock_broken = 0;
@@ -625,17 +636,75 @@ close_all_pooled_connections(void)
             continue;
         if (current_pool_id != pool)
         {
-            for (i = 0; i < NUM_BACKENDS; i++)
-            {
-                if (endPoint->conn_slots[i].socket > 0)
-                {
-                    close(endPoint->conn_slots[i].socket);
-                    endPoint->conn_slots[i].socket = -1;
-                }
-            }
+            TerminatePooledBackendClusterConnection(endPoint);
+            memset(&pool_entry->endPoint, 0, sizeof(PooledBackendClusterConnection));
+            pool_entry->status = POOL_ENTRY_EMPTY;
         }
-        memset(&pool_entry->endPoint, 0, sizeof(PooledBackendClusterConnection));
-        pool_entry->status = POOL_ENTRY_EMPTY;
     }
     ResetBackendClusterConnection();
+}
+
+static int
+terminate_idle_classic_connections(void)
+{
+    int pool;
+    time_t nearest = TMINTMAX;
+    time_t now;
+    ConnectionPoolEntry *connection_pool = firstChildConnectionPool;
+
+    Assert(processType == PT_CHILD);
+    Assert(connection_pool);
+
+    now = time(NULL);
+    if (now == ((time_t)-1))
+    {
+        ereport(WARNING, (errmsg("Failed to get current time")));
+        return -1;
+    }
+
+    ereport(DEBUG2,
+            (errmsg("backend timer handler called at %ld", now)));
+
+    POOL_SETMASK(&BlockSig);
+
+    for (pool = 0; pool < pool_config->max_pool; pool++)
+    {
+        ConnectionPoolEntry *pool_entry = &connection_pool[pool];
+        PooledBackendClusterConnection *endPoint = &pool_entry->endPoint;
+        int sec;
+
+        if (pool_entry->status == POOL_ENTRY_EMPTY)
+            continue;
+
+        sec = now - pool_entry->last_returned_time;
+        if (sec >= pool_config->connection_life_time)
+        {
+            /* discard expired connection */
+            ereport(DEBUG2,
+                    (errmsg("classic connection pool house keeping discarding pooled connection:%d idle for %d ses", pool, sec),
+                     errdetail("expired user \"%s\" database \"%s\"",
+                               endPoint->user, endPoint->database)));
+            TerminatePooledBackendClusterConnection(endPoint);
+            memset(&pool_entry->endPoint, 0, sizeof(PooledBackendClusterConnection));
+            pool_entry->status = POOL_ENTRY_EMPTY;
+            pool_entry->last_returned_time = TMINTMAX;
+        }
+        else
+        {
+            if (pool_entry->last_returned_time < nearest)
+                nearest = pool_entry->last_returned_time;
+        }
+    }
+    POOL_SETMASK(&UnBlockSig);
+    if (nearest != TMINTMAX)
+    {
+        nearest = pool_config->connection_life_time - (now - nearest);
+        if (nearest <= 0)
+            nearest = 1;
+        ereport(LOG,
+                (errmsg("returning classic connection pool house keeping next check in %ld sec", nearest)));
+        return nearest;
+    }
+    UpdatePooledConnectionCount();
+    return 0;
 }

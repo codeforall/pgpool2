@@ -398,12 +398,9 @@ do_child(int *fds, int ipc_fd)
 		/* reset busy flag */
 		idle = 0;
 
-		/* check backend timer is expired */
-		if (backend_timer_expired)
-		{
-			pool_backend_timer();
-			backend_timer_expired = 0;
-		}
+		/* check if we need to perform house keeping */
+		if (IsHousekeepingAlarmActive())
+			DoConnectionPoolHouseKeeping();
 
 		/*
 		 * Check whether failover/failback is ongoing and wait for it to
@@ -541,7 +538,6 @@ backend_cleanup(POOL_CONNECTION * volatile *frontend, BackendClusterConnection *
 			{
 				if (pool_process_query(*frontend, backend, 1) == POOL_CONTINUE)
 				{
-					pool_connection_pool_timer(backend);
 					cache_connection = true;
 				}
 			}
@@ -601,6 +597,8 @@ backend_cleanup(POOL_CONNECTION * volatile *frontend, BackendClusterConnection *
 	}
 
 	ReleaseClusterConnection(!cache_connection);
+	/* Run the connection pool house keeping */
+	DoConnectionPoolHouseKeeping();
 
 	/* reset the config parameters */
 	reset_all_variables(NULL, NULL);
@@ -1562,7 +1560,7 @@ wait_for_new_connections(int *fds, SockAddr *saddr)
 					/*
 					 * Check if there are expired connection_life_time.
 					 */
-					if (backend_timer_expired)
+					if (IsHousekeepingAlarmActive())
 					{
 						/*
 						 * We add 10 seconds to connection_life_time so that there's
@@ -1572,11 +1570,10 @@ wait_for_new_connections(int *fds, SockAddr *saddr)
 
 						while (seconds-- > 0)
 						{
-							/* check backend timer is expired */
-							if (backend_timer_expired)
+							/* check if we need to perform house keeping */
+							if (IsHousekeepingAlarmActive())
 							{
-								pool_backend_timer();
-								backend_timer_expired = 0;
+								DoConnectionPoolHouseKeeping();
 								break;
 							}
 							sleep(1);
@@ -1595,12 +1592,9 @@ wait_for_new_connections(int *fds, SockAddr *saddr)
 
 	for (;;)
 	{
-		/* check backend timer is expired */
-		if (backend_timer_expired)
-		{
-			pool_backend_timer();
-			backend_timer_expired = 0;
-		}
+		/* check if we need to perform house keeping */
+		if (IsHousekeepingAlarmActive())
+			DoConnectionPoolHouseKeeping();
 
 		/* prepare select */
 		memcpy((char *) &rmask, (char *) &readmask, sizeof(fd_set));
@@ -1638,12 +1632,9 @@ wait_for_new_connections(int *fds, SockAddr *saddr)
 				(errmsg("UNLOCKING select()")));
 	}
 
-	/* check backend timer is expired */
-	if (backend_timer_expired)
-	{
-		pool_backend_timer();
-		backend_timer_expired = 0;
-	}
+	/* check if we need to perform house keeping */
+	if (IsHousekeepingAlarmActive())
+		DoConnectionPoolHouseKeeping();
 
 	errno = save_errno;
 
@@ -1692,12 +1683,9 @@ retry_accept:
 	afd = accept(fd, (struct sockaddr *) &saddr->addr, &saddr->salen);
 
 	save_errno = errno;
-	/* check backend timer is expired */
-	if (backend_timer_expired)
-	{
-		pool_backend_timer();
-		backend_timer_expired = 0;
-	}
+	/* check if we need to perform house keeping */
+	if (IsHousekeepingAlarmActive())
+		DoConnectionPoolHouseKeeping();
 	errno = save_errno;
 	if (afd < 0)
 	{

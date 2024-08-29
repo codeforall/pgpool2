@@ -706,6 +706,7 @@ PgpoolMain(bool discard_status, bool clear_memcache_oidmaps)
 		if (pool_config->connection_pool_type == GLOBAL_CONNECTION_POOL)
 		{
 			process_service_child = !handle_child_ipc_requests();
+			DoConnectionPoolHouseKeeping();
 		}
 		else
 		{
@@ -893,7 +894,6 @@ fork_a_child(int *fds, int id)
 		health_check_timer_expired = 0;
 		reload_config_request = 0;
 		my_proc_id = id;
-		ereport(LOG,(errmsg("CHILD PROCESS %d, pid %d",id, getpid())));
 		do_child(fds, ipc_sock[0]);
 	}
 	else if (pid == -1)
