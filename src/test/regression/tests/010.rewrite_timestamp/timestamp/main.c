@@ -133,14 +133,13 @@ main(int argc, char **argv)
 	char	   *query;
 	List	   *tree;
 	ListCell   *l;
-	StartupPacket sp;
 	BackendClusterConnection backend;
 	BackendNodeConnection slot;
 	POOL_SENT_MESSAGE msg;
 	POOL_QUERY_CONTEXT ctx;
 
-	backend.slots[0] = &slot;
-	slot.sp = &sp;
+	memset(&slot, 0, sizeof(slot));
+	backend.slots[0] = slot;
 	bool		error;
 
 	MemoryContextInit();
@@ -220,4 +219,5 @@ void		ExceptionalCondition
 			(const char *conditionName, const char *errorType,
 			 const char *fileName, int lineNumber)
 {
+	exit(1);
 }
