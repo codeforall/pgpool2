@@ -672,7 +672,7 @@ pool_send_frontend_exits(BackendClusterConnection * backend)
 		 * send a terminate message to backend if there's an existing
 		 * connection
 		 */
-		if (VALID_BACKEND(i) && &CONNECTION_SLOT(backend, i))
+		if (VALID_BACKEND(i) && CONNECTION(backend, i))
 		{
 			pool_write_noerror(CONNECTION(backend, i), "X", 1);
 
@@ -4115,7 +4115,7 @@ start_internal_transaction(POOL_CONNECTION * frontend, BackendClusterConnection 
 	{
 		for (i = 0; i < NUM_BACKENDS; i++)
 		{
-			if (VALID_BACKEND_RAW(i) && &CONNECTION_SLOT(backend, i) &&
+			if (VALID_BACKEND_RAW(i) && CONNECTION(backend, i) &&
 				!INTERNAL_TRANSACTION_STARTED(backend, i) &&
 				TSTATE(backend, i) == 'I')
 			{
@@ -4948,7 +4948,7 @@ SELECT_RETRY:
 			/*
 			 * make sure that connection slot exists
 			 */
-			if (&CONNECTION_SLOT(backend, i) == 0)
+			if (CONNECTION(backend, i) == NULL)
 			{
 				ereport(LOG,
 						(errmsg("error occurred while reading and processing packets"),

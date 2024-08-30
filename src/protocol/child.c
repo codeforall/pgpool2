@@ -2072,11 +2072,14 @@ retry_startup:
 		}
 		else
 		{
+			bool ret;
 			ereport(LOG,
 				(errmsg("Using the exisiting pooled connection at pool_id:%d", pro_info->pool_id),
 					errdetail("database:%s user:%s protoMajor:%d", frontend->database, frontend->username, frontend->protoVersion)));
 			connect_missing_backend_nodes(sp, frontend, pro_info->pool_id);
-			if (!connect_using_existing_connection(frontend, backend, sp))
+			ret = connect_using_existing_connection(frontend, backend, sp);
+			pool_free_startup_packet(sp);
+			if (!ret)
 				return NULL;
 			return backend;
 		}
@@ -2090,11 +2093,13 @@ retry_startup:
 	if (lease_type == LEASE_TYPE_DISCART_AND_CREATE || lease_type == LEASE_TYPE_EMPTY_SLOT_RESERVED)
 	{
 		/* Create a new connection */
-		return connect_backend(sp, frontend, pro_info->pool_id);
+		backend = connect_backend(sp, frontend, pro_info->pool_id);
+		return backend;
 	}
 
 	if (lease_type == LEASE_TYPE_NO_AVAILABLE_SLOT)
 	{
+		pool_free_startup_packet(sp);
 		ereport(ERROR,
 			(errmsg("no pool slot available for database:%s user:%s protoMajor:%d",frontend->database, frontend->username, frontend->protoVersion),
 				 errhint("Consider increasing the max_pool_size")));

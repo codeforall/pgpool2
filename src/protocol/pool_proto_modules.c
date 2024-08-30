@@ -2362,7 +2362,7 @@ static POOL_STATUS close_standby_transactions(POOL_CONNECTION * frontend,
 
 	for (i = 0; i < NUM_BACKENDS; i++)
 	{
-		if (&CONNECTION_SLOT(backend, i) &&
+		if (CONNECTION(backend, i) &&
 			TSTATE(backend, i) == 'T' &&
 			BACKEND_INFO(i).backend_status == CON_UP &&
 			(MAIN_REPLICA ? PRIMARY_NODE_ID : REAL_MAIN_NODE_ID) != i)

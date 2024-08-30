@@ -558,14 +558,6 @@ get_pool_entry_to_discard(void)
 
     for (i = 0; i < pool_config->max_pool; i++)
     {
-
-        // ereport(DEBUG1,
-        //         (errmsg("creating connection pool"),
-        //          errdetail("user: %s database: %s closetime: %ld",
-        //                    CONNECTION_SLOT(p, main_node_id)->sp->user,
-        //                    CONNECTION_SLOT(p, main_node_id)->sp->database,
-        //                    CONNECTION_SLOT(p, main_node_id)->closetime)));
-
         if (connection_pool[i].last_returned_time < closetime)
         {
             closetime = connection_pool[i].last_returned_time;
