@@ -51,8 +51,8 @@
 #include <arpa/inet.h>
 
 
-#define IPC_READY_TO_USE_CONNECTION_MESSAGE     'S' /* Followd by sockets transfer */
-#define IPC_DISCARD_AND_REUSE_MESSAGE           'D' /* Followd by sockets transfer */
+#define IPC_READY_TO_USE_CONNECTION_MESSAGE     'S' /* Followed by sockets transfer */
+#define IPC_DISCARD_AND_REUSE_MESSAGE           'D' /* Followed by sockets transfer */
 #define IPC_NO_CONN_AVAILABLE_MESSAGE    'F'
 #define IPC_CONNECT_AND_PROCEED_MESSAGE  'E'
 #define IPC_NON_POOL_CONNECT_MESSAGE     'N'

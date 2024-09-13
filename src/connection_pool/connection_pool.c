@@ -322,7 +322,7 @@ get_backend_connection_for_cancel_packer(CancelPacket *cp)
         {
             PooledBackendNodeConnection *c = &ConnectionPool[i].endPoint.conn_slots[con_slot];
 
-            if (!VALID_BACKEND(con_slot))
+            if (!VALID_BACKEND_RAW(con_slot))
                 continue;
 
             ereport(LOG,
@@ -363,12 +363,12 @@ get_backend_node_connection_for_backend_pid(int backend_pid, int *backend_node_i
             continue;
         for (con_slot = 0; con_slot < NUM_BACKENDS; con_slot++)
         {
-            if (!VALID_BACKEND(con_slot))
+            if (!VALID_BACKEND_RAW(con_slot))
                 continue;
 
-            if (ConnectionPool[i].endPoint.conn_slots[con_slot].pid == backend_pid)
+            if (ntohl(ConnectionPool[i].endPoint.conn_slots[con_slot].pid) == backend_pid)
             {
-                *backend_node_id = i;
+                *backend_node_id = con_slot;
                 return &ConnectionPool[i].endPoint.conn_slots[con_slot];
             }
         }
